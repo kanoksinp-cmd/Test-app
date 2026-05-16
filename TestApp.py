@@ -11,18 +11,18 @@ st.set_page_config(page_title="Trip Expense Splitter Pro", layout="wide")
 # 2. ฟังก์ชันจัดการฐานข้อมูล
 DB_FILE = "trip_database.db"
 
-# พจนานุกรมเก็บข้อมูลธนาคาร, รูปไอคอน (Emoji/Text) และ Deep Link URL Schemes
-BANK_DETAILS = {
-    "กสิกรไทย (KBank)": {"icon": "🟢 K+ ", "scheme": "kplus://"},
-    "ไทยพาณิชย์ (SCB)": {"icon": "🔮 SCB ", "scheme": "scbeasy://"},
-    "กรุงไทย (KTB)": {"icon": "🔵 KTB ", "scheme": "krungthainext://"},
-    "กรุงเทพ (BBL)": {"icon": "🔷 BBL ", "scheme": "bangkokbankm://"},
-    "กรุงศรีอยุธยา (BAY)": {"icon": "💛 BAY ", "scheme": "krungsrisimple://"},
-    "ทหารไทยธนชาต (TTB)": {"icon": "🟠 TTB ", "scheme": "ttbtouch://"},
-    "ออมสิน (GSB)": {"icon": "🌸 GSB ", "scheme": "gsbmymo://"},
-}
-
-BANK_LIST = ["-- เลือกธนาคาร --"] + list(BANK_DETAILS.keys()) + ["ธ.ก.ส.", "ยูโอบี (UOB)"]
+BANK_LIST = [
+    "-- เลือกธนาคาร --",
+    "กสิกรไทย (KBank)",
+    "ไทยพาณิชย์ (SCB)",
+    "กรุงไทย (KTB)",
+    "กรุงเทพ (BBL)",
+    "กรุงศรีอยุธยา (BAY)",
+    "ทหารไทยธนชาต (TTB)",
+    "ออมสิน (GSB)",
+    "ธ.ก.ส.",
+    "ยูโอบี (UOB)"
+]
 
 def get_db_connection():
     conn = sqlite3.connect(DB_FILE)
@@ -38,6 +38,7 @@ def init_db():
     cursor.execute('CREATE TABLE IF NOT EXISTS expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, trip_id INTEGER, description TEXT, amount REAL, payer_name TEXT, split_members TEXT, image_blob BLOB, FOREIGN KEY(trip_id) REFERENCES trips(id))')
     cursor.execute('CREATE TABLE IF NOT EXISTS settlements (id INTEGER PRIMARY KEY AUTOINCREMENT, trip_id INTEGER, debtor TEXT, creditor TEXT, amount REAL, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(trip_id) REFERENCES trips(id))')
     
+    # อัปเดตโครงสร้างรองรับประเภทธนาคารเพิ่มเติม
     cursor.execute("PRAGMA table_info(all_users)")
     columns = [row[1] for row in cursor.fetchall()]
     if 'promptpay' not in columns:
@@ -169,6 +170,7 @@ st.sidebar.markdown("---")
 current_trip = st.sidebar.selectbox("🗺️ เลือกทริป:", active_trip_list)
 trip_id = conn.execute("SELECT id FROM trips WHERE name = ? AND status = 0", (current_trip,)).fetchone()["id"]
 
+# ====== ส่วนแก้ไขชื่อทริปปัจจุบัน ======
 with st.sidebar.expander("✏️ แก้ไขชื่อทริปปัจจุบัน"):
     rename_input = st.text_input("เปลี่ยนชื่อทริปเป็น:", value=current_trip).strip()
     if st.button("💾 ยืนยันเปลี่ยนชื่อ"):
@@ -288,6 +290,7 @@ with tab3:
     conn = get_db_connection()
     expenses_rows = conn.execute("SELECT * FROM expenses WHERE trip_id = ?", (trip_id,)).fetchall()
     
+    # ดึงข้อมูลบัญชีของสมาชิก
     user_profiles = {row['name']: {"promptpay": row['promptpay'], "bank_name": row['bank_name'], "bank_acc": row['bank_account']} 
                      for row in conn.execute("SELECT name, promptpay, bank_name, bank_account FROM all_users").fetchall()}
     conn.close()
@@ -310,7 +313,7 @@ with tab3:
         for m, b in net.items():
             if b < -0.01: c2.error(f"{m}: {abs(b):,.2f}")
         
-        st.subheader("🚀 แผนการโอนเงิน (คลิกปุ่มขวาบนของเลขเพื่อคัดลอก หรือกดปุ่มเปิดแอปธนาคาร)")
+        st.subheader("🚀 แผนการโอนเงิน (คลิกปุ่มขวาบนของเลขเพื่อคัดลอก)")
         debtors = [[m, b] for m, b in net.items() if b < -0.01]
         creditors = [[m, b] for m, b in net.items() if b > 0.01]
         final_tx = []
@@ -320,11 +323,13 @@ with tab3:
             debtor_name = debtors[0][0]
             creditor_name = creditors[0][0]
             
+            # ดึงข้อมูลบัญชีผู้รับ (Creditor) ป้องกันกรณีค่าเป็น None ด้วยการใช้ or ""
             prof = user_profiles.get(creditor_name, {})
             pp = (prof.get("promptpay") or "").strip()
             b_name = (prof.get("bank_name") or "").strip()
             b_acc = (prof.get("bank_acc") or "").strip()
             
+            # แสดงรายการนำทางผู้โอน
             st.markdown(f"💳 **{debtor_name}** โอนให้ 👉 **{creditor_name}** จำนวน **{amt:,.2f}** บาท")
             
             if pp or b_acc:
@@ -338,24 +343,6 @@ with tab3:
                         label = f"🏦 {b_name}" if b_name else "🏦 เลขบัญชี"
                         st.caption(f"{label} ของ {creditor_name}")
                         st.code(b_acc, language="text")
-                
-                # ====== ส่วนเพิ่มปุ่มเปิดแอปธนาคารบนมือถือ ======
-                if b_name in BANK_DETAILS:
-                    bank_info = BANK_DETAILS[b_name]
-                    # สร้างปุ่มเปิดลิงก์แบบใช้ HTML ในการตกแต่งเพื่อให้คลิกง่ายขึ้นบนมือถือ
-                    button_html = f'''
-                    <a href="{bank_info["scheme"]}" target="_blank" style="text-decoration: none;">
-                        <div style="background-color: #1E1E1E; color: white; padding: 10px 15px; 
-                                    border-radius: 8px; text-align: center; font-weight: bold; 
-                                    border: 1px solid #4B5563; margin-top: 5px; cursor: pointer;">
-                            {bank_info["icon"]} เปิดแอป {b_name.split(" ")[0]} เพื่อโอนเงิน
-                        </div>
-                    </a>
-                    '''
-                    st.markdown(button_html, unsafe_allow_html=True)
-                else:
-                    # กรณีไม่ตรงระบบ Scheme หลัก หรือเป็นพร้อมเพย์ทั่วไป จะสร้างลิงก์สำหรับแอปที่รองรับ scheme กลาง (ถ้ามี)
-                    pass
             else:
                 st.warning(f"⚠️ {creditor_name} ยังไม่ได้บันทึกข้อมูลบัญชี")
             
@@ -370,7 +357,7 @@ with tab3:
             conn.execute("DELETE FROM settlements WHERE trip_id = ?", (trip_id,))
             for t in final_tx: conn.execute("INSERT INTO settlements (trip_id, debtor, creditor, amount) VALUES (?,?,?,?)", (trip_id, t[0], t[1], t[2]))
             conn.commit(); conn.close()
-            st.balloons()
+            st.balloons()  # ใส่เอฟเฟกต์กระดาษโปรยเพื่อความฟินตอนปิดทริป
             st.success("🎯 บันทึกปิดทริปและเคลียร์ยอดเงินทั้งหมดสำเร็จเรียบร้อยแล้ว!")
             time.sleep(1.5)
             st.rerun()

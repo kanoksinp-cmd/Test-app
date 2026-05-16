@@ -154,6 +154,23 @@ st.sidebar.markdown("---")
 current_trip = st.sidebar.selectbox("🗺️ เลือกทริป:", active_trip_list)
 trip_id = conn.execute("SELECT id FROM trips WHERE name = ? AND status = 0", (current_trip,)).fetchone()["id"]
 
+# ====== เพิ่มส่วนแก้ไขชื่อทริปปัจจุบัน ======
+with st.sidebar.expander("✏️ แก้ไขชื่อทริปปัจจุบัน"):
+    rename_input = st.text_input("เปลี่ยนชื่อทริปเป็น:", value=current_trip).strip()
+    if st.button("💾 ยืนยันเปลี่ยนชื่อ"):
+        if rename_input and rename_input != current_trip:
+            try:
+                conn_rename = get_db_connection()
+                conn_rename.execute("UPDATE trips SET name = ? WHERE id = ?", (rename_input, trip_id))
+                conn_rename.commit()
+                conn_rename.close()
+                st.toast("เปลี่ยนชื่อทริปสำเร็จ!")
+                st.rerun()
+            except:
+                st.error("ชื่อทริปนี้ซ้ำกับทริปอื่นที่มีอยู่")
+        elif not rename_input:
+            st.error("กรุณากรอกชื่อทริป")
+
 if st.sidebar.button("🗑️ ย้ายทริปลงถังขยะ"):
     conn.execute("UPDATE trips SET status = 1 WHERE id = ?", (trip_id,))
     conn.commit(); st.rerun()

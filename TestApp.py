@@ -272,11 +272,11 @@ with tab3:
             debtor_name = debtors[0][0]
             creditor_name = creditors[0][0]
             
-            # ดึงข้อมูลบัญชีผู้รับ (Creditor)
+            # ดึงข้อมูลบัญชีผู้รับ (Creditor) ป้องกันกรณีค่าเป็น None ด้วยการใช้ or ""
             prof = user_profiles.get(creditor_name, {})
-            pp = prof.get("promptpay", "").strip()
-            b_name = prof.get("bank_name", "").strip()
-            b_acc = prof.get("bank_acc", "").strip()
+            pp = (prof.get("promptpay") or "").strip()
+            b_name = (prof.get("bank_name") or "").strip()
+            b_acc = (prof.get("bank_acc") or "").strip()
             
             # แสดงรายการนำทางผู้โอน
             st.markdown(f"💳 **{debtor_name}** โอนให้ 👉 **{creditor_name}** จำนวน **{amt:,.2f}** บาท")

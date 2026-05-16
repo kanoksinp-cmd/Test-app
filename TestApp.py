@@ -4,6 +4,7 @@ import sqlite3
 import io
 from PIL import Image
 import time
+import urllib.parse
 
 # 1. ตั้งค่าหน้าจอ
 st.set_page_config(page_title="Trip Expense Splitter Pro", layout="wide")
@@ -286,7 +287,6 @@ with tab2:
                     with st.form(f"edit_{row['id']}"):
                         u_desc = st.text_input("รายการ:", value=row['description'])
                         u_amt = st.number_input("จำนวนเงิน:", value=row['amount'])
-                        # ป้องกันกรณีที่ผู้ใช้ถูกถอดออก แต่ชื่อยังอยู่ในบิลเก่า
                         current_payer = row['payer_name']
                         payer_options = existing_members if current_payer in existing_members else existing_members + [current_payer]
                         u_payer = st.selectbox("คนจ่าย:", payer_options, index=payer_options.index(current_payer))
@@ -323,7 +323,6 @@ with tab3:
     conn = get_db_connection()
     expenses_rows = conn.execute("SELECT * FROM expenses WHERE trip_id = ?", (trip_id,)).fetchall()
     
-    # ดึงข้อมูลบัญชีของสมาชิก
     user_profiles = {row['name']: {"promptpay": row['promptpay'], "bank_name": row['bank_name'], "bank_acc": row['bank_account']} 
                      for row in conn.execute("SELECT name, promptpay, bank_name, bank_account FROM all_users").fetchall()}
     conn.close()
@@ -331,7 +330,6 @@ with tab3:
     if not expenses_rows: 
         st.info("ยังไม่มีข้อมูล")
     else:
-        # กำหนดเซ็ตรายชื่อคนทั้งหมดที่มีส่วนเกี่ยวข้องในบิล เพื่อไม่ให้โค้ดพังเวลาถอดสมาชิกระหว่างทาง
         all_involved_members = set(existing_members)
         for r in expenses_rows:
             all_involved_members.add(r['payer_name'])
@@ -362,13 +360,11 @@ with tab3:
             debtor_name = debtors[0][0]
             creditor_name = creditors[0][0]
             
-            # ดึงข้อมูลบัญชีผู้รับ (Creditor) ป้องกันกรณีค่าเป็น None ด้วยการใช้ or ""
             prof = user_profiles.get(creditor_name, {})
             pp = (prof.get("promptpay") or "").strip()
             b_name = (prof.get("bank_name") or "").strip()
             b_acc = (prof.get("bank_acc") or "").strip()
             
-            # แสดงรายการนำทางผู้โอน
             st.markdown(f"💳 **{debtor_name}** โอนให้ 👉 **{creditor_name}** จำนวน **{amt:,.2f}** บาท")
             
             if pp or b_acc:
@@ -391,12 +387,60 @@ with tab3:
             if abs(debtors[0][1]) < 0.01: debtors.pop(0)
             if abs(creditors[0][1]) < 0.01: creditors.pop(0)
 
+        # ================= ส่วนระบบส่งข้อมูลเข้า LINE =================
+        st.subheader("📲 ส่งสรุปยอดเข้า LINE")
+        
+        line_msg = f"📊 สรุปยอดค่าใช้จ่ายทริป: {current_trip}\n"
+        line_msg += "-------------------------------\n"
+        for d_n, c_n, a_m in final_tx:
+            line_msg += f"💳 {d_n} โอนให้ 👉 {c_n} = {a_m:,.2f} บาท\n"
+            prof = user_profiles.get(c_n, {})
+            pp = (prof.get("promptpay") or "").strip()
+            b_name = (prof.get("bank_name") or "").strip()
+            b_acc = (prof.get("bank_acc") or "").strip()
+            if pp: line_msg += f"   • พร้อมเพย์: {pp}\n"
+            if b_acc: line_msg += f"   • ธนาคาร: {b_name} ({b_acc})\n"
+            line_msg += "\n"
+        line_msg += "-------------------------------\n"
+        line_msg += "ฝากเคลียร์เงินกันด้วยน้าาา ✈️🥳"
+
+        encoded_msg = urllib.parse.quote(line_msg)
+        line_share_url = f"https://line.me/R/msg/text/?{encoded_msg}"
+
+        st.markdown(
+            f'''
+            <a href="{line_share_url}" target="_blank" style="text-decoration: none;">
+                <button style="
+                    background-color: #06C755; 
+                    color: white; 
+                    border: none; 
+                    padding: 12px 20px; 
+                    font-size: 16px; 
+                    font-weight: bold;
+                    border-radius: 8px; 
+                    cursor: pointer;
+                    display: flex;
+                    align-items: center;
+                    gap: 10px;
+                    width: 100%;
+                    justify-content: center;
+                    box-shadow: 0px 4px 6px rgba(0,0,0,0.1);
+                ">
+                    💬 ส่งแผนการโอนเงินไปที่แอป LINE
+                </button>
+            </a>
+            ''', 
+            unsafe_allow_html=True
+        )
+        st.write("---")
+        # ============================================================
+
         if st.button("🎯 บันทึกปิด Event", type="primary"):
             conn = get_db_connection()
             conn.execute("DELETE FROM settlements WHERE trip_id = ?", (trip_id,))
             for t in final_tx: conn.execute("INSERT INTO settlements (trip_id, debtor, creditor, amount) VALUES (?,?,?,?)", (trip_id, t[0], t[1], t[2]))
             conn.commit(); conn.close()
-            st.balloons()  # ใส่เอฟเฟกต์กระดาษโปรยเพื่อความฟินตอนปิดEvent
+            st.balloons()
             st.success("🎯 บันทึกปิดEventและเคลียร์ยอดเงินทั้งหมดสำเร็จเรียบร้อยแล้ว!")
             time.sleep(1.5)
             st.rerun()

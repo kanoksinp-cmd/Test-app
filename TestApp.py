@@ -70,78 +70,81 @@ def compress_image(uploaded_file):
 
 init_db()
 
-# --- 3. Sidebar ---
-st.sidebar.header("👥 จัดการสมาชิก & บัญชี")
+# --- 🚀 จัดการ Session ของ User แต่ละเครื่อง ---
+if "current_online_user" not in st.session_state:
+    st.session_state["current_online_user"] = None
 
-with st.sidebar.expander("👤 ลงทะเบียน / แก้ไขข้อมูลสมาชิก"):
-    conn = get_db_connection()
-    existing_all_users = [row["name"] for row in conn.execute("SELECT name FROM all_users").fetchall()]
-    conn.close()
+# --- 3. Sidebar ---
+st.sidebar.header("🔐 บัญชีผู้ใช้งานเครื่องนี้")
+
+# 👤 ส่วนของการยืนยันตัวตน Online User ประจำเครื่อง
+conn = get_db_connection()
+existing_all_users = [row["name"] for row in conn.execute("SELECT name FROM all_users").fetchall()]
+conn.close()
+
+if st.session_state["current_online_user"] is None:
+    st.sidebar.warning("⚠️ เครื่องนี้ยังไม่ได้ล็อกอินโปรไฟล์")
+    login_mode = st.sidebar.radio("ทางเลือกบัญชี:", ["เลือกโปรไฟล์ที่มีอยู่", "สร้างโปรไฟล์ใหม่"], horizontal=True)
     
-    user_mode = st.radio("เลือกการทำงาน:", ["ลงทะเบียนใหม่", "อัปเดตข้อมูลบัญชีเดิม"], horizontal=True)
-    
-    if user_mode == "ลงทะเบียนใหม่":
-        reg_name = st.text_input("ชื่อผู้ใช้งานใหม่:").strip()
-        reg_pp = st.text_input("เลขพร้อมเพย์ (ไม่บังคับ):", key="reg_pp").strip()
-        reg_bank_name = st.selectbox("เลือกธนาคาร:", BANK_LIST, key="reg_bank_name")
-        reg_bank_acc = st.text_input("เลขบัญชีธนาคาร:", key="reg_bank_acc").strip()
-        
-        if st.button("เพิ่มสมาชิก"):
-            if reg_name:
+    if login_mode == "เลือกโปรไฟล์ที่มีอยู่":
+        if existing_all_users:
+            user_select = st.sidebar.selectbox("เลือกชื่อของคุณ:", existing_all_users)
+            if st.sidebar.button("เข้าสู่ระบบเครื่องนี้"):
+                st.session_state["current_online_user"] = user_select
+                st.toast(f"👋 ยินดีต้อนรับกลับมา, {user_select}!")
+                time.sleep(1)
+                st.rerun()
+        else:
+            st.sidebar.caption("ยังไม่มีข้อมูลสมาชิกในระบบ กรุณาสร้างใหม่")
+            
+    else:
+        new_online_name = st.sidebar.text_input("ระบุชื่อเล่น/ชื่อของคุณ:").strip()
+        if st.sidebar.button("สร้างและเข้าสู่ระบบ"):
+            if new_online_name:
                 try:
-                    final_bank = reg_bank_name if reg_bank_name != "-- เลือกธนาคาร --" else ""
                     conn = get_db_connection()
-                    conn.execute("INSERT INTO all_users (name, promptpay, bank_name, bank_account) VALUES (?, ?, ?, ?)", 
-                                 (reg_name, reg_pp, final_bank, reg_bank_acc))
+                    conn.execute("INSERT INTO all_users (name) VALUES (?)", (new_online_name,))
                     conn.commit(); conn.close()
-                    st.success(f"🎉 ลงทะเบียนสมาชิก '{reg_name}' สำเร็จแล้ว!")
+                    st.session_state["current_online_user"] = new_online_name
+                    st.sidebar.success(f"🎉 สร้างโปรไฟล์ '{new_online_name}' บนเครื่องนี้สำเร็จ!")
                     time.sleep(1)
                     st.rerun()
-                except: st.sidebar.error("❌ ชื่อนี้มีในระบบแล้ว")
+                except: st.sidebar.error("❌ ชื่อนี้มีในระบบออนไลน์แล้ว")
             else:
-                st.error("⚠️ กรุณากรอกชื่อสมาชิก")
-                
-    else:
-        if existing_all_users:
-            target_user = st.selectbox("เลือกสมาชิกที่ต้องการอัปเดต:", existing_all_users)
+                st.sidebar.error("⚠️ กรุณากรอกชื่อ")
+else:
+    # หากผู้ใช้เข้าสู่ระบบบนเครื่องนี้แล้ว
+    st.sidebar.success(f"🟢 ผู้ใช้งานเครื่องนี้: **{st.session_state['current_online_user']}**")
+    
+    # ดึงข้อมูลส่วนตัวมาจัดเก็บในแผงโปรไฟล์
+    conn = get_db_connection()
+    my_data = conn.execute("SELECT * FROM all_users WHERE name = ?", (st.session_state["current_online_user"],)).fetchone()
+    conn.close()
+    
+    with st.sidebar.expander("⚙️ แก้ไขโปรไฟล์/ข้อมูลรับเงินส่วนตัว"):
+        edit_pp = st.text_input("เลขพร้อมเพย์:", value=my_data['promptpay'] if my_data['promptpay'] else "")
+        db_bank = my_data['bank_name'] if my_data['bank_name'] else "-- เลือกธนาคาร --"
+        bank_idx = BANK_LIST.index(db_bank) if db_bank in BANK_LIST else 0
+        edit_bank_name = st.selectbox("เลือกธนาคารบัญชี:", BANK_LIST, index=bank_idx)
+        edit_bank_acc = st.text_input("เลขบัญชีธนาคาร:", value=my_data['bank_account'] if my_data['bank_account'] else "")
+        
+        if st.button("💾 บันทึกข้อมูลส่วนตัว"):
+            final_bank = edit_bank_name if edit_bank_name != "-- เลือกธนาคาร --" else ""
             conn = get_db_connection()
-            user_data = conn.execute("SELECT * FROM all_users WHERE name = ?", (target_user,)).fetchone()
-            conn.close()
+            conn.execute("UPDATE all_users SET promptpay = ?, bank_name = ?, bank_account = ? WHERE name = ?", 
+                         (edit_pp, final_bank, edit_bank_acc, st.session_state["current_online_user"]))
+            conn.commit(); conn.close()
+            st.toast("💾 บันทึกโปรไฟล์ส่วนตัวของคุณสำเร็จ!")
+            time.sleep(1)
+            st.rerun()
             
-            edit_name = st.text_input("แก้ไขชื่อสมาชิก:", value=user_data['name']).strip()
-            edit_pp = st.text_input("แก้ไขเลขพร้อมเพย์:", value=user_data['promptpay'] if user_data['promptpay'] else "")
-            db_bank = user_data['bank_name'] if user_data['bank_name'] else "-- เลือกธนาคาร --"
-            bank_idx = BANK_LIST.index(db_bank) if db_bank in BANK_LIST else 0
-            edit_bank_name = st.selectbox("แก้ไขธนาคาร:", BANK_LIST, index=bank_idx)
-            edit_bank_acc = st.text_input("แก้ไขเลขบัญชีธนาคาร:", value=user_data['bank_account'] if user_data['bank_account'] else "")
-            
-            if st.button("อัปเดตข้อมูลบัญชี"):
-                if not edit_name:
-                    st.error("⚠️ ชื่อสมาชิกต้องไม่เป็นค่าว่าง")
-                else:
-                    try:
-                        final_edit_bank = edit_bank_name if edit_bank_name != "-- เลือกธนาคาร --" else ""
-                        conn = get_db_connection()
-                        conn.execute("UPDATE all_users SET name = ?, promptpay = ?, bank_name = ?, bank_account = ? WHERE name = ?", 
-                                     (edit_name, edit_pp, final_edit_bank, edit_bank_acc, target_user))
-                        
-                        if edit_name != target_user:
-                            conn.execute("UPDATE members SET name = ? WHERE name = ?", (edit_name, target_user))
-                            conn.execute("UPDATE expenses SET payer_name = ? WHERE payer_name = ?", (edit_name, target_user))
-                            conn.execute("UPDATE settlements SET debtor = ? WHERE debtor = ?", (edit_name, target_user))
-                            conn.execute("UPDATE settlements SET creditor = ? WHERE creditor = ?", (edit_name, target_user))
-                            
-                        conn.commit(); conn.close()
-                        st.success(f"💾 อัปเดตข้อมูลบัญชีของ '{edit_name}' เรียบร้อยแล้ว!")
-                        time.sleep(1)
-                        st.rerun()
-                    except sqlite3.IntegrityError:
-                        st.error("❌ ชื่อนี้ซ้ำกับสมาชิกท่านอื่นในระบบ")
-        else:
-            st.caption("ยังไม่มีสมาชิกในระบบ")
+    if st.sidebar.button("🚪 ออกจากระบบเครื่องนี้", type="secondary"):
+        st.session_state["current_online_user"] = None
+        st.rerun()
 
 st.sidebar.markdown("---")
-# ====== อัปเดตส่วนสร้าง Event ให้มีปฏิทินเลือกวันที่ ======
+
+# ====== ส่วนสร้าง Event ใหม่พร้อมระบุวันที่ ======
 st.sidebar.subheader("➕ สร้าง Event ใหม่")
 new_trip_name = st.sidebar.text_input("ชื่อ Event:").strip()
 new_trip_date = st.sidebar.date_input("วันที่จัด Event:", value=datetime.today())
@@ -150,7 +153,6 @@ if st.sidebar.button("สร้าง Event ใหม่"):
     if new_trip_name:
         try:
             conn = get_db_connection()
-            # แปลงวันที่เป็น String format YYYY-MM-DD เพื่อบันทึกลง SQLite
             date_str = new_trip_date.strftime("%Y-%m-%d")
             conn.execute("INSERT INTO trips (name, status, trip_date) VALUES (?, 0, ?)", (new_trip_name, date_str))
             conn.commit(); conn.close()
@@ -170,7 +172,8 @@ with st.sidebar.expander("🗑️ ถังขยะ"):
     else:
         for dt in deleted_trips:
             c1, c2 = st.columns([1.5, 1.5])
-            display_deleted_name = f"{dt['name']} ({dt['trip_date']})" if dt['trip_date'] else dt['name']
+            has_dt = dt['trip_date'] and str(dt['trip_date']).strip() and not pd.isna(dt['trip_date'])
+            display_deleted_name = f"{dt['name']} ({dt['trip_date']})" if has_dt else dt['name']
             c1.write(display_deleted_name)
             sub_c1, sub_c2 = c2.columns(2)
             if sub_c1.button("กู้คืน", key=f"res_{dt['id']}"):
@@ -191,10 +194,9 @@ with st.sidebar.expander("🗑️ ถังขยะ"):
 
 active_trips_df = pd.read_sql_query("SELECT * FROM trips WHERE status = 0", conn)
 
-# กำหนดสไตล์ชื่อทริปตอนให้เลือกใน dropdown ให้โชว์วันที่ด้วยเพื่อความง่าย
 if not active_trips_df.empty:
     active_trips_df['display_name'] = active_trips_df.apply(
-        lambda r: f"{r['name']} 📅 ({r['trip_date']})" if r['trip_date'] else r['name'], axis=1
+        lambda r: f"{r['name']} 📅 ({r['trip_date']})" if r['trip_date'] and str(r['trip_date']).strip() and not pd.isna(r['trip_date']) else r['name'], axis=1
     )
     active_trip_display_list = active_trips_df["display_name"].tolist()
 else:
@@ -202,24 +204,28 @@ else:
 
 if not active_trip_display_list:
     st.title("✈️ Trip Expense Splitter Pro")
-    st.info("กรุณาสร้างEventใหม่ หรือกู้คืนจากถังขยะที่เมนูซ้ายมือ")
+    st.info("กรุณาสร้าง Event ใหม่ หรือกู้คืนจากถังขยะที่เมนูซ้ายมือ")
     st.stop()
 
 st.sidebar.markdown("---")
 selected_display_trip = st.sidebar.selectbox("🗺️ เลือกEvent:", active_trip_display_list)
 
-# ค้นหาชื่อทริปและ ID ตัวจริงจากตารางอ้างอิงของชื่อที่เลือกใน Dropdown
 matched_trip = active_trips_df[active_trips_df['display_name'] == selected_display_trip].iloc[0]
 current_trip = matched_trip['name']
 trip_id = int(matched_trip['id'])
 current_trip_date = matched_trip['trip_date']
 
-# ====== ส่วนแก้ไขชื่อและวันที่ Event ปัจจุบัน ======
 with st.sidebar.expander("✏️ แก้ไขข้อมูล Event ปัจจุบัน"):
     rename_input = st.text_input("เปลี่ยนชื่อ Event เป็น:", value=current_trip).strip()
     
-    # ดึงวันดั้งเดิมมาใส่ในตัวแปร Default
-    default_date = datetime.strptime(current_trip_date, "%Y-%m-%d") if current_trip_date else datetime.today()
+    if current_trip_date and str(current_trip_date).strip() and not pd.isna(current_trip_date):
+        try:
+            default_date = datetime.strptime(str(current_trip_date), "%Y-%m-%d")
+        except ValueError:
+            default_date = datetime.today()
+    else:
+        default_date = datetime.today()
+        
     re_date_input = st.date_input("แก้ไขวันที่จัด Event:", value=default_date)
     
     if st.button("💾 ยืนยันเปลี่ยนข้อมูล"):
@@ -245,7 +251,7 @@ if st.sidebar.button("🗑️ ลบ Event"):
     time.sleep(1)
     st.rerun()
 
-st.sidebar.subheader(f"👥 สมาชิก: {current_trip}")
+st.sidebar.subheader(f"👥 สมาชิกภายใน Event")
 all_users_list = [row["name"] for row in conn.execute("SELECT name FROM all_users").fetchall()]
 existing_members = [row["name"] for row in conn.execute("SELECT name FROM members WHERE trip_id = ?", (trip_id,)).fetchall()]
 available_users = [u for u in all_users_list if u not in existing_members]
@@ -253,34 +259,45 @@ available_users = [u for u in all_users_list if u not in existing_members]
 if existing_members:
     for member in existing_members:
         m_col1, m_col2 = st.sidebar.columns([4, 1])
-        m_col1.caption(f"• {member}")
-        if m_col2.button("❌", key=f"remove_mem_{member}", help=f"ถอด {member} ออกจาก Event นี้"):
+        # ตรวจสอบเพื่อไฮไลต์สถานะว่าคนนี้คือเราเองบนเครื่องนี้หรือไม่
+        is_me = f" (คุณ)" if member == st.session_state["current_online_user"] else ""
+        m_col1.caption(f"• {member}{is_me}")
+        if m_col2.button("❌", key=f"remove_mem_{member}", help=f"ถอด {member} ออกจาก Event"):
             conn.execute("DELETE FROM members WHERE trip_id = ? AND name = ?", (trip_id, member))
             conn.commit()
-            st.toast(f"🗑️ ถอด {member} ออกจาก Event เรียบร้อย")
+            st.toast(f"🗑️ ถอด {member} ออกแล้ว")
             time.sleep(1)
             st.rerun()
 
-selected_u = st.sidebar.selectbox("เพิ่มเพื่อน:", ["-- เลือก --"] + available_users)
-if st.sidebar.button("ดึงเข้าEvent"):
-    if selected_u != "-- เลือก --":
+# ปุ่มดึงชื่อระบบคลาวด์/ระบบออนไลน์เข้ามาร่วมในทริปนี้
+selected_u = st.sidebar.selectbox("ชวนเพื่อนออนไลน์เข้าร่วมบิล:", ["-- เลือกเพื่อน --"] + available_users)
+if st.sidebar.button("ดึงเพื่อนเข้ากลุ่ม"):
+    if selected_u != "-- เลือกเพื่อน --":
         conn.execute("INSERT INTO members (trip_id, name) VALUES (?, ?)", (trip_id, selected_u))
         conn.commit()
-        st.toast(f"➕ ดึง {selected_u} เข้าสู่ Event แล้ว!")
+        st.toast(f"➕ ดึง {selected_u} เข้ากลุ่มสำเร็จ!")
         time.sleep(1)
         st.rerun()
 conn.close()
 
 # --- 4. Main UI ---
+has_valid_date = current_trip_date and str(current_trip_date).strip() and not pd.isna(current_trip_date)
+
+# บังคับล็อกอินให้รู้ตัวตนผู้ใช้เครื่องนี้ก่อนเริ่มใช้งานหน้าต่างหลัก
+if st.session_state["current_online_user"] is None:
+    st.title("🛄 กรุณาระบุข้อมูลผู้ใช้งานเครื่องนี้ก่อน")
+    st.info("กรุณาเลือกโปรไฟล์ของคุณหรือสร้างผู้ใช้ใหม่ที่เมนูด้านซ้ายบน เพื่อเริ่มเปิดดูสถิติและลงรายการบิล")
+    st.stop()
+
 if not existing_members:
     st.title(f"✈️ Event: {current_trip}")
-    if current_trip_date:
+    if has_valid_date:
         st.caption(f"📅 วันที่จัดทริป: {current_trip_date}")
-    st.warning("กรุณาเลือกสมาชิกเข้า Event ก่อน")
+    st.warning("⚠️ ยังไม่มีใครอยู่ในกลุ่มนี้เลย ชวนเพื่อนหรือตัวคุณเองที่แถบซ้ายมือก่อนครับ")
     st.stop()
 
 st.title(f"✈️ ข้อมูล Event: {current_trip}")
-if current_trip_date:
+if has_valid_date:
     st.subheader(f"📅 วันที่จัด: {current_trip_date}")
 
 tab1, tab2, tab3 = st.tabs(["📝 สร้างบิลใหม่", "📊 ประวัติบันทึกบิล", "💰 สรุปเคลียร์เงินสมาชิก"])
@@ -290,11 +307,16 @@ with tab1:
         st.header("➕ เพิ่มบิลค่าใช้จ่าย")
         desc = st.text_input("รายการ:")
         amt = st.number_input("จำนวนเงิน:", min_value=0.0)
-        payer = st.selectbox("คนสำรองจ่าย:", existing_members)
-        st.write("คนหาร:")
+        
+        # ตั้งค่า Default ให้คนสำรองจ่ายเป็นชื่อ user ของเครื่องนี้โดยอัตโนมัติเพื่อความไว
+        my_name = st.session_state["current_online_user"]
+        default_idx = existing_members.index(my_name) if my_name in existing_members else 0
+        payer = st.selectbox("คนสำรองจ่ายเงินก่อน:", existing_members, index=default_idx)
+        
+        st.write("คนร่วมหารในบิลนี้:")
         split_to = [m for m in existing_members if st.checkbox(m, value=True, key=f"add_{m}")]
-        file = st.file_uploader("สลิป:", type=['jpg','png','jpeg'])
-        if st.form_submit_button("💾 บันทึก", type="primary"):
+        file = st.file_uploader("แนบรูปภาพสลิปเงิน:", type=['jpg','png','jpeg'])
+        if st.form_submit_button("💾 บันทึกบิล", type="primary"):
             if desc and amt > 0 and split_to:
                 blob = compress_image(file)
                 conn = get_db_connection()
@@ -305,16 +327,16 @@ with tab1:
                 time.sleep(1)
                 st.rerun()
             else:
-                st.error("⚠️ กรุณากรอกข้อมูลรายการ จำนวนเงิน และคนหารให้ครบถ้วน")
+                st.error("⚠️ กรุณากรอกข้อมูลรายการ จำนวนเงิน และเลือกผู้มีส่วนร่วมหารให้ครบถ้วน")
 
 with tab2:
     conn = get_db_connection()
     expenses = conn.execute("SELECT * FROM expenses WHERE trip_id = ?", (trip_id,)).fetchall()
     conn.close()
-    if not expenses: st.info("ยังไม่มีข้อมูล")
+    if not expenses: st.info("ยังไม่มีข้อมูลค่าใช้จ่ายในกลุ่มนี้")
     else:
         for row in expenses:
-            with st.expander(f"📌 {row['description']} | {row['amount']:,.2f} บาท"):
+            with st.expander(f"📌 {row['description']} | {row['amount']:,.2f} บาท (โดย {row['payer_name']})"):
                 c1, c2 = st.columns([1, 1.2])
                 with c1:
                     if row['image_blob']: st.image(row['image_blob'], use_container_width=True)
@@ -355,16 +377,17 @@ with tab2:
                         st.rerun()
 
 with tab3:
-    st.header("🤝 สรุปยอด")
+    st.header("🤝 สรุปยอดแผนการกระจายเงิน")
     conn = get_db_connection()
     expenses_rows = conn.execute("SELECT * FROM expenses WHERE trip_id = ?", (trip_id,)).fetchall()
     
+    # โหลดโปรไฟล์บัญชีส่วนตัวของแต่ละคนมาประมวลผลปลายทาง
     user_profiles = {row['name']: {"promptpay": row['promptpay'], "bank_name": row['bank_name'], "bank_acc": row['bank_account']} 
                      for row in conn.execute("SELECT name, promptpay, bank_name, bank_account FROM all_users").fetchall()}
     conn.close()
     
     if not expenses_rows: 
-        st.info("ยังไม่มีข้อมูล")
+        st.info("ยังไม่มีข้อมูลรายการบิลที่จะนำมาคำนวณยอดเงิน")
     else:
         all_involved_members = set(existing_members)
         for r in expenses_rows:
@@ -379,14 +402,14 @@ with tab3:
             for m in s_list: net[m] -= share
         
         c1, c2 = st.columns(2)
-        c1.write("**🟢 คนที่ต้องได้รับคืน:**")
+        c1.write("**🟢 คนที่ต้องได้รับเงินคืน:**")
         for m, b in net.items():
-            if b > 0.01: c1.success(f"{m}: {b:,.2f}")
-        c2.write("**🔴 คนที่ต้องจ่าย:**")
+            if b > 0.01: c1.success(f"{m}: {b:,.2f} บาท")
+        c2.write("**🔴 คนที่ต้องจ่ายออก:**")
         for m, b in net.items():
-            if b < -0.01: c2.error(f"{m}: {abs(b):,.2f}")
+            if b < -0.01: c2.error(f"{m}: {abs(b):,.2f} บาท")
         
-        st.subheader("🚀 แผนการโอนเงิน (คลิกปุ่มขวาบนของเลขเพื่อคัดลอก)")
+        st.subheader("🚀 แผนการโอนเงินคืน (ดึงข้อมูลเรียลไทม์จากโปรไฟล์แต่ละคน)")
         debtors = [[m, b] for m, b in net.items() if b < -0.01]
         creditors = [[m, b] for m, b in net.items() if b > 0.01]
         final_tx = []
@@ -396,12 +419,15 @@ with tab3:
             debtor_name = debtors[0][0]
             creditor_name = creditors[0][0]
             
+            # ค้นหาข้อมูลโปรไฟล์ผู้รับเงินปลายทางอัตโนมัติ
             prof = user_profiles.get(creditor_name, {})
             pp = (prof.get("promptpay") or "").strip()
             b_name = (prof.get("bank_name") or "").strip()
             b_acc = (prof.get("bank_acc") or "").strip()
             
-            st.markdown(f"💳 **{debtor_name}** โอนให้ 👉 **{creditor_name}** จำนวน **{amt:,.2f}** บาท")
+            # ตรวจสอบเพื่ออำนวยความสะดวก ไฮไลต์ถ้าเป็นยอดที่เราต้องทำธุรกรรมบนเครื่องนี้
+            me_note = " (⚠️ รายการที่คุณต้องโอน)" if debtor_name == st.session_state["current_online_user"] else ""
+            st.markdown(f"💳 **{debtor_name}** โอนให้ 👉 **{creditor_name}** จำนวน **{amt:,.2f}** บาท **{me_note}**")
             
             if pp or b_acc:
                 col_pp, col_bank = st.columns(2)
@@ -415,7 +441,7 @@ with tab3:
                         st.caption(f"{label} ของ {creditor_name}")
                         st.code(b_acc, language="text")
             else:
-                st.warning(f"⚠️ {creditor_name} ยังไม่ได้บันทึกข้อมูลบัญชี")
+                st.warning(f"⚠️ {creditor_name} ยังไม่ได้บันทึกข้อมูลรายละเอียดเลขบัญชีในหน้าโปรไฟล์ส่วนตัว")
             
             st.write("---")
             final_tx.append((debtor_name, creditor_name, amt))
@@ -427,7 +453,7 @@ with tab3:
         st.subheader("📲 ส่งสรุปยอดเข้า LINE")
         
         line_msg = f"📊 สรุปยอดค่าใช้จ่ายทริป: {current_trip}\n"
-        if current_trip_date:
+        if has_valid_date:
             line_msg += f"📅 วันที่: {current_trip_date}\n"
         line_msg += "-------------------------------\n"
         for d_n, c_n, a_m in final_tx:

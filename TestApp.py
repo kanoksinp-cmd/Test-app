@@ -6,9 +6,15 @@ from PIL import Image
 import time
 import urllib.parse
 from datetime import datetime, timedelta
+# 🔄 นำเข้าโมดูลสำหรับรีเฟรชหน้าจออัตโนมัติ
+from streamlit_autorefresh import st_autorefresh
 
 # 1. ตั้งค่าหน้าจอ
 st.set_page_config(page_title="Trip Expense Splitter Pro", layout="wide")
+
+# 🔄 สั่งให้หน้าจอรีเฟรชตัวเองโดยอัตโนมัติทุกๆ 1,000 มิลลิวินาที (1 วินาที)
+# กำหนด key เพื่อป้องกันไม่ให้เกิด loop ซ้อนกัน และไม่จำกัดจำนวนครั้ง (limit=None)
+st_autorefresh(interval=1000, limit=None, key="trip_app_refresh")
 
 # 2. ฟังก์ชันจัดการฐานข้อมูล
 DB_FILE = "trip_database.db"
@@ -39,11 +45,8 @@ def init_db():
     cursor.execute('CREATE TABLE IF NOT EXISTS members (id INTEGER PRIMARY KEY AUTOINCREMENT, trip_id INTEGER, name TEXT, FOREIGN KEY(trip_id) REFERENCES trips(id))')
     cursor.execute('CREATE TABLE IF NOT EXISTS expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, trip_id INTEGER, description TEXT, amount REAL, payer_name TEXT, split_members TEXT, image_blob BLOB, FOREIGN KEY(trip_id) REFERENCES trips(id))')
     cursor.execute('CREATE TABLE IF NOT EXISTS settlements (id INTEGER PRIMARY KEY AUTOINCREMENT, trip_id INTEGER, debtor TEXT, creditor TEXT, amount REAL, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(trip_id) REFERENCES trips(id))')
-    
-    # 🟢 ตารางใหม่สำหรับบันทึกเวลาเพื่อเช็คผู้ใช้งานแบบออนไลน์ร่วมกัน
     cursor.execute('CREATE TABLE IF NOT EXISTS online_status (name TEXT PRIMARY KEY, last_seen DATETIME)')
 
-    # อัปเดตโครงสร้างตารางหลัก (all_users)
     cursor.execute("PRAGMA table_info(all_users)")
     columns = [row[1] for row in cursor.fetchall()]
     if 'promptpay' not in columns:
@@ -53,7 +56,6 @@ def init_db():
     if 'bank_account' not in columns:
         cursor.execute("ALTER TABLE all_users ADD COLUMN bank_account TEXT")
         
-    # อัปเดตโครงสร้างตารางรองรับวันที่ (trips)
     cursor.execute("PRAGMA table_info(trips)")
     trip_columns = [row[1] for row in cursor.fetchall()]
     if 'trip_date' not in trip_columns:
@@ -71,7 +73,6 @@ def compress_image(uploaded_file):
     img.save(buffer, format="JPEG", quality=70)
     return buffer.getvalue()
 
-# ฟังก์ชันอัปเดตสถานะการออนไลน์ (Heartbeat) ส่งไปยัง DB ส่วนกลาง
 def update_online_heartbeat(username):
     if username:
         conn = get_db_connection()
@@ -80,11 +81,10 @@ def update_online_heartbeat(username):
         conn.commit()
         conn.close()
 
-# ฟังก์ชันดึงรายชื่อคนที่กำลังออนไลน์อยู่ในขณะนี้ (ขีดเส้นตายที่ 5 นาทีก่อนหน้า)
 def get_currently_online_users():
     conn = get_db_connection()
-    # ดึงรายชื่อคนที่ขยับเขยื้อนหน้าจอภายใน 5 นาทีล่าสุด
-    rows = conn.execute("SELECT name FROM online_status WHERE last_seen >= datetime('now', 'localtime', '-5 minutes')").fetchall()
+    # เนื่องจากเรารีเฟรชทุก 1 วินาที จึงปรับเวลาบีบให้แคบลงเป็น 15 วินาทีล่าสุด เพื่อความเรียลไทม์ (ถ้าใครปิดแท็บไป ไฟจะดับไวขึ้น)
+    rows = conn.execute("SELECT name FROM online_status WHERE last_seen >= datetime('now', 'localtime', '-15 seconds')").fetchall()
     conn.close()
     return [row["name"] for row in rows]
 
@@ -94,7 +94,7 @@ init_db()
 if "current_online_user" not in st.session_state:
     st.session_state["current_online_user"] = None
 
-# เรียกใช้ Heartbeat ตราบใดที่ยังหน้านี้เปิดอยู่ เพื่ออัปเดตเวลาออนไลน์
+# เรียกใช้ Heartbeat ทุกๆ วินาทีที่หน้าจอรีเฟรชตัวเอง เพื่อส่งสถานะไปยัง DB กลาง
 if st.session_state["current_online_user"]:
     update_online_heartbeat(st.session_state["current_online_user"])
 
@@ -114,7 +114,7 @@ if st.session_state["current_online_user"] is None:
             user_select = st.sidebar.selectbox("เลือกชื่อของคุณ:", existing_all_users)
             if st.sidebar.button("เข้าสู่ระบบเครื่องนี้"):
                 st.session_state["current_online_user"] = user_select
-                update_online_heartbeat(user_select) # อัปเดตทันทีเมื่อเข้าสู่ระบบ
+                update_online_heartbeat(user_select)
                 st.toast(f"👋 ยินดีต้อนรับกลับมา, {user_select}!")
                 time.sleep(1)
                 st.rerun()
@@ -130,7 +130,7 @@ if st.session_state["current_online_user"] is None:
                     conn.execute("INSERT INTO all_users (name) VALUES (?)", (new_online_name,))
                     conn.commit(); conn.close()
                     st.session_state["current_online_user"] = new_online_name
-                    update_online_heartbeat(new_online_name) # บันทึกออนไลน์ทันที
+                    update_online_heartbeat(new_online_name)
                     st.sidebar.success(f"🎉 สร้างโปรไฟล์ '{new_online_name}' สำเร็จ!")
                     time.sleep(1)
                     st.rerun()
@@ -161,15 +161,14 @@ else:
             time.sleep(1)
             st.rerun()
             
-    if st.sidebar.button("🚪 ออกจากระบบ", type="secondary"):
-        # ลบสถานะเวลาออนไลน์ออกจากระบบเมื่อกดยอม Logout
+    if st.sidebar.button("🚪 ออกจากระบบเครื่องนี้", type="secondary"):
         conn = get_db_connection()
         conn.execute("DELETE FROM online_status WHERE name = ?", (st.session_state["current_online_user"],))
         conn.commit(); conn.close()
         st.session_state["current_online_user"] = None
         st.rerun()
 
-# 🟢 ====== ส่วนแสดงรายชื่อสมาชิกที่กำลัง ONLINE ร่วมกันในระบบ ======
+# ====== ส่วนแสดงรายชื่อสมาชิกที่กำลัง ONLINE ร่วมกันในระบบ ======
 st.sidebar.markdown("---")
 st.sidebar.subheader("🌐 สมาชิกที่ออนไลน์ในขณะนี้")
 online_users = get_currently_online_users()
@@ -302,7 +301,6 @@ if existing_members:
         m_col1, m_col2 = st.sidebar.columns([4, 1])
         is_me = f" (คุณ)" if member == st.session_state["current_online_user"] else ""
         
-        # 🟢 ไฮไลต์จุดเขียวที่ชื่อสมาชิกในทริปเพิ่มเติม หากเขากำลังออนไลน์เปิดหน้านี้อยู่ด้วย
         is_online_dot = "🟢 " if member in online_users else "⚪ "
         m_col1.caption(f"{is_online_dot}{member}{is_me}")
         

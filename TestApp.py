@@ -119,7 +119,7 @@ if st.session_state["current_online_user"] is None:
     if login_mode == "เลือกโปรไฟล์ที่มีอยู่":
         if existing_all_users:
             user_select = st.sidebar.selectbox("เลือกชื่อของคุณ:", existing_all_users)
-            if st.sidebar.button("เข้าสู่ระบบเครื่องนี้"):
+            if st.sidebar.button("เข้าสู่ระบบ"):
                 st.session_state["current_online_user"] = user_select
                 update_online_heartbeat(user_select)
                 st.toast(f"👋 ยินดีต้อนรับกลับมา, {user_select}!")
@@ -168,7 +168,7 @@ else:
             time.sleep(1)
             st.rerun()
             
-    if st.sidebar.button("🚪 ออกจากระบบเครื่องนี้", type="secondary"):
+    if st.sidebar.button("🚪 ออกจากระบบ", type="secondary"):
         conn = get_db_connection()
         conn.execute("DELETE FROM online_status WHERE name = ?", (st.session_state["current_online_user"],))
         conn.commit(); conn.close()

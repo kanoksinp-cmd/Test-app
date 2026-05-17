@@ -161,7 +161,7 @@ else:
             time.sleep(1)
             st.rerun()
             
-    if st.sidebar.button("🚪 ออกจากระบบเครื่องนี้", type="secondary"):
+    if st.sidebar.button("🚪 ออกจากระบบ", type="secondary"):
         # ลบสถานะเวลาออนไลน์ออกจากระบบเมื่อกดยอม Logout
         conn = get_db_connection()
         conn.execute("DELETE FROM online_status WHERE name = ?", (st.session_state["current_online_user"],))

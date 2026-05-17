@@ -5,7 +5,7 @@ import io
 from PIL import Image
 import time
 import urllib.parse
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # 1. ตั้งค่าหน้าจอ
 st.set_page_config(page_title="Trip Expense Splitter Pro", layout="wide")
@@ -40,6 +40,9 @@ def init_db():
     cursor.execute('CREATE TABLE IF NOT EXISTS expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, trip_id INTEGER, description TEXT, amount REAL, payer_name TEXT, split_members TEXT, image_blob BLOB, FOREIGN KEY(trip_id) REFERENCES trips(id))')
     cursor.execute('CREATE TABLE IF NOT EXISTS settlements (id INTEGER PRIMARY KEY AUTOINCREMENT, trip_id INTEGER, debtor TEXT, creditor TEXT, amount REAL, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(trip_id) REFERENCES trips(id))')
     
+    # 🟢 ตารางใหม่สำหรับบันทึกเวลาเพื่อเช็คผู้ใช้งานแบบออนไลน์ร่วมกัน
+    cursor.execute('CREATE TABLE IF NOT EXISTS online_status (name TEXT PRIMARY KEY, last_seen DATETIME)')
+
     # อัปเดตโครงสร้างตารางหลัก (all_users)
     cursor.execute("PRAGMA table_info(all_users)")
     columns = [row[1] for row in cursor.fetchall()]
@@ -68,16 +71,36 @@ def compress_image(uploaded_file):
     img.save(buffer, format="JPEG", quality=70)
     return buffer.getvalue()
 
+# ฟังก์ชันอัปเดตสถานะการออนไลน์ (Heartbeat) ส่งไปยัง DB ส่วนกลาง
+def update_online_heartbeat(username):
+    if username:
+        conn = get_db_connection()
+        conn.execute("INSERT INTO online_status (name, last_seen) VALUES (?, datetime('now', 'localtime')) "
+                     "ON CONFLICT(name) DO UPDATE SET last_seen = datetime('now', 'localtime')", (username,))
+        conn.commit()
+        conn.close()
+
+# ฟังก์ชันดึงรายชื่อคนที่กำลังออนไลน์อยู่ในขณะนี้ (ขีดเส้นตายที่ 5 นาทีก่อนหน้า)
+def get_currently_online_users():
+    conn = get_db_connection()
+    # ดึงรายชื่อคนที่ขยับเขยื้อนหน้าจอภายใน 5 นาทีล่าสุด
+    rows = conn.execute("SELECT name FROM online_status WHERE last_seen >= datetime('now', 'localtime', '-5 minutes')").fetchall()
+    conn.close()
+    return [row["name"] for row in rows]
+
 init_db()
 
-# --- 🚀 จัดการ Session ของ User แต่ละเครื่อง ---
+# --- จัดการ Session ของ User แต่ละเครื่อง ---
 if "current_online_user" not in st.session_state:
     st.session_state["current_online_user"] = None
+
+# เรียกใช้ Heartbeat ตราบใดที่ยังหน้านี้เปิดอยู่ เพื่ออัปเดตเวลาออนไลน์
+if st.session_state["current_online_user"]:
+    update_online_heartbeat(st.session_state["current_online_user"])
 
 # --- 3. Sidebar ---
 st.sidebar.header("🔐 บัญชีผู้ใช้งานเครื่องนี้")
 
-# 👤 ส่วนของการยืนยันตัวตน Online User ประจำเครื่อง
 conn = get_db_connection()
 existing_all_users = [row["name"] for row in conn.execute("SELECT name FROM all_users").fetchall()]
 conn.close()
@@ -91,6 +114,7 @@ if st.session_state["current_online_user"] is None:
             user_select = st.sidebar.selectbox("เลือกชื่อของคุณ:", existing_all_users)
             if st.sidebar.button("เข้าสู่ระบบเครื่องนี้"):
                 st.session_state["current_online_user"] = user_select
+                update_online_heartbeat(user_select) # อัปเดตทันทีเมื่อเข้าสู่ระบบ
                 st.toast(f"👋 ยินดีต้อนรับกลับมา, {user_select}!")
                 time.sleep(1)
                 st.rerun()
@@ -106,17 +130,16 @@ if st.session_state["current_online_user"] is None:
                     conn.execute("INSERT INTO all_users (name) VALUES (?)", (new_online_name,))
                     conn.commit(); conn.close()
                     st.session_state["current_online_user"] = new_online_name
-                    st.sidebar.success(f"🎉 สร้างโปรไฟล์ '{new_online_name}' บนเครื่องนี้สำเร็จ!")
+                    update_online_heartbeat(new_online_name) # บันทึกออนไลน์ทันที
+                    st.sidebar.success(f"🎉 สร้างโปรไฟล์ '{new_online_name}' สำเร็จ!")
                     time.sleep(1)
                     st.rerun()
                 except: st.sidebar.error("❌ ชื่อนี้มีในระบบออนไลน์แล้ว")
             else:
                 st.sidebar.error("⚠️ กรุณากรอกชื่อ")
 else:
-    # หากผู้ใช้เข้าสู่ระบบบนเครื่องนี้แล้ว
     st.sidebar.success(f"🟢 ผู้ใช้งานเครื่องนี้: **{st.session_state['current_online_user']}**")
     
-    # ดึงข้อมูลส่วนตัวมาจัดเก็บในแผงโปรไฟล์
     conn = get_db_connection()
     my_data = conn.execute("SELECT * FROM all_users WHERE name = ?", (st.session_state["current_online_user"],)).fetchone()
     conn.close()
@@ -139,10 +162,28 @@ else:
             st.rerun()
             
     if st.sidebar.button("🚪 ออกจากระบบเครื่องนี้", type="secondary"):
+        # ลบสถานะเวลาออนไลน์ออกจากระบบเมื่อกดยอม Logout
+        conn = get_db_connection()
+        conn.execute("DELETE FROM online_status WHERE name = ?", (st.session_state["current_online_user"],))
+        conn.commit(); conn.close()
         st.session_state["current_online_user"] = None
         st.rerun()
 
+# 🟢 ====== ส่วนแสดงรายชื่อสมาชิกที่กำลัง ONLINE ร่วมกันในระบบ ======
 st.sidebar.markdown("---")
+st.sidebar.subheader("🌐 สมาชิกที่ออนไลน์ในขณะนี้")
+online_users = get_currently_online_users()
+
+if online_users:
+    for o_user in online_users:
+        if o_user == st.session_state["current_online_user"]:
+            st.sidebar.markdown(f"🌟 **{o_user}** *(เครื่องคุณ)*")
+        else:
+            st.sidebar.markdown(f"🟢 **{o_user}** *(เครื่องอื่น)*")
+else:
+    st.sidebar.caption("ไม่มีผู้ใช้งานอื่นออนไลน์")
+st.sidebar.markdown("---")
+
 
 # ====== ส่วนสร้าง Event ใหม่พร้อมระบุวันที่ ======
 st.sidebar.subheader("➕ สร้าง Event ใหม่")
@@ -259,9 +300,12 @@ available_users = [u for u in all_users_list if u not in existing_members]
 if existing_members:
     for member in existing_members:
         m_col1, m_col2 = st.sidebar.columns([4, 1])
-        # ตรวจสอบเพื่อไฮไลต์สถานะว่าคนนี้คือเราเองบนเครื่องนี้หรือไม่
         is_me = f" (คุณ)" if member == st.session_state["current_online_user"] else ""
-        m_col1.caption(f"• {member}{is_me}")
+        
+        # 🟢 ไฮไลต์จุดเขียวที่ชื่อสมาชิกในทริปเพิ่มเติม หากเขากำลังออนไลน์เปิดหน้านี้อยู่ด้วย
+        is_online_dot = "🟢 " if member in online_users else "⚪ "
+        m_col1.caption(f"{is_online_dot}{member}{is_me}")
+        
         if m_col2.button("❌", key=f"remove_mem_{member}", help=f"ถอด {member} ออกจาก Event"):
             conn.execute("DELETE FROM members WHERE trip_id = ? AND name = ?", (trip_id, member))
             conn.commit()
@@ -269,7 +313,6 @@ if existing_members:
             time.sleep(1)
             st.rerun()
 
-# ปุ่มดึงชื่อระบบคลาวด์/ระบบออนไลน์เข้ามาร่วมในทริปนี้
 selected_u = st.sidebar.selectbox("ชวนเพื่อนออนไลน์เข้าร่วมบิล:", ["-- เลือกเพื่อน --"] + available_users)
 if st.sidebar.button("ดึงเพื่อนเข้ากลุ่ม"):
     if selected_u != "-- เลือกเพื่อน --":
@@ -283,7 +326,6 @@ conn.close()
 # --- 4. Main UI ---
 has_valid_date = current_trip_date and str(current_trip_date).strip() and not pd.isna(current_trip_date)
 
-# บังคับล็อกอินให้รู้ตัวตนผู้ใช้เครื่องนี้ก่อนเริ่มใช้งานหน้าต่างหลัก
 if st.session_state["current_online_user"] is None:
     st.title("🛄 กรุณาระบุข้อมูลผู้ใช้งานเครื่องนี้ก่อน")
     st.info("กรุณาเลือกโปรไฟล์ของคุณหรือสร้างผู้ใช้ใหม่ที่เมนูด้านซ้ายบน เพื่อเริ่มเปิดดูสถิติและลงรายการบิล")
@@ -308,7 +350,6 @@ with tab1:
         desc = st.text_input("รายการ:")
         amt = st.number_input("จำนวนเงิน:", min_value=0.0)
         
-        # ตั้งค่า Default ให้คนสำรองจ่ายเป็นชื่อ user ของเครื่องนี้โดยอัตโนมัติเพื่อความไว
         my_name = st.session_state["current_online_user"]
         default_idx = existing_members.index(my_name) if my_name in existing_members else 0
         payer = st.selectbox("คนสำรองจ่ายเงินก่อน:", existing_members, index=default_idx)
@@ -381,7 +422,6 @@ with tab3:
     conn = get_db_connection()
     expenses_rows = conn.execute("SELECT * FROM expenses WHERE trip_id = ?", (trip_id,)).fetchall()
     
-    # โหลดโปรไฟล์บัญชีส่วนตัวของแต่ละคนมาประมวลผลปลายทาง
     user_profiles = {row['name']: {"promptpay": row['promptpay'], "bank_name": row['bank_name'], "bank_acc": row['bank_account']} 
                      for row in conn.execute("SELECT name, promptpay, bank_name, bank_account FROM all_users").fetchall()}
     conn.close()
@@ -419,13 +459,11 @@ with tab3:
             debtor_name = debtors[0][0]
             creditor_name = creditors[0][0]
             
-            # ค้นหาข้อมูลโปรไฟล์ผู้รับเงินปลายทางอัตโนมัติ
             prof = user_profiles.get(creditor_name, {})
             pp = (prof.get("promptpay") or "").strip()
             b_name = (prof.get("bank_name") or "").strip()
             b_acc = (prof.get("bank_acc") or "").strip()
             
-            # ตรวจสอบเพื่ออำนวยความสะดวก ไฮไลต์ถ้าเป็นยอดที่เราต้องทำธุรกรรมบนเครื่องนี้
             me_note = " (⚠️ รายการที่คุณต้องโอน)" if debtor_name == st.session_state["current_online_user"] else ""
             st.markdown(f"💳 **{debtor_name}** โอนให้ 👉 **{creditor_name}** จำนวน **{amt:,.2f}** บาท **{me_note}**")
             

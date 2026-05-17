@@ -313,7 +313,7 @@ if existing_members:
         is_online_dot = "🟢 " if member in online_users else "⚪ "
         m_col1.caption(f"{is_online_dot}{member}{is_me}")
         
-        if m_col2.button("❌", key=f"remove_mem_{member}", help=f"ถอด {member} ออกจาก Event"):
+        if m_col2.button("ออกจากกลุ่ม", key=f"remove_mem_{member}", help=f"ถอด {member} ออกจาก Event"):
             conn.execute("DELETE FROM members WHERE trip_id = ? AND name = ?", (trip_id, member))
             conn.commit()
             st.toast(f"🗑️ ถอด {member} ออกแล้ว")

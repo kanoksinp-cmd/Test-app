@@ -6,17 +6,15 @@ from PIL import Image
 import time
 import urllib.parse
 from datetime import datetime, timedelta
-# 🔄 นำเข้าโมดูลสำหรับรีเฟรชหน้าจออัตโนมัติ
+# 🔄 นำเข้าคอมโพเนนต์สำหรับดึงสัญญาณรีเฟรชอัตโนมัติ
 from streamlit_autorefresh import st_autorefresh
 
-# 1. ตั้งค่าหน้าจอ
+# 1. ตั้งค่าหน้าจอและโครงสร้างพื้นฐาน
 st.set_page_config(page_title="Trip Expense Splitter Pro", layout="wide")
 
-# 🔄 สั่งให้หน้าจอรีเฟรชตัวเองโดยอัตโนมัติทุกๆ 1,000 มิลลิวินาที (1 วินาที)
-# กำหนด key เพื่อป้องกันไม่ให้เกิด loop ซ้อนกัน และไม่จำกัดจำนวนครั้ง (limit=None)
-st_autorefresh(interval=1000, limit=None, key="trip_app_refresh")
+# 🔄 สั่งให้ Streamlit รีเฟรชหน้าจออัตโนมัติทุกๆ 1,000 มิลลิวินาที (1 วินาที)
+st_autorefresh(interval=1000, limit=None, key="trip_app_live_refresh")
 
-# 2. ฟังก์ชันจัดการฐานข้อมูล
 DB_FILE = "trip_database.db"
 
 BANK_LIST = [
@@ -32,6 +30,7 @@ BANK_LIST = [
     "ยูโอบี (UOB)"
 ]
 
+# 2. ฟังก์ชันจัดการฐานข้อมูล SQL
 def get_db_connection():
     conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
@@ -40,13 +39,17 @@ def get_db_connection():
 def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
+    # สร้างตารางพื้นฐาน
     cursor.execute('CREATE TABLE IF NOT EXISTS all_users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL)')
     cursor.execute('CREATE TABLE IF NOT EXISTS trips (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, status INTEGER DEFAULT 0)')
     cursor.execute('CREATE TABLE IF NOT EXISTS members (id INTEGER PRIMARY KEY AUTOINCREMENT, trip_id INTEGER, name TEXT, FOREIGN KEY(trip_id) REFERENCES trips(id))')
     cursor.execute('CREATE TABLE IF NOT EXISTS expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, trip_id INTEGER, description TEXT, amount REAL, payer_name TEXT, split_members TEXT, image_blob BLOB, FOREIGN KEY(trip_id) REFERENCES trips(id))')
     cursor.execute('CREATE TABLE IF NOT EXISTS settlements (id INTEGER PRIMARY KEY AUTOINCREMENT, trip_id INTEGER, debtor TEXT, creditor TEXT, amount REAL, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(trip_id) REFERENCES trips(id))')
+    
+    # 🟢 ตารางสำหรับระบบออนไลน์ร่วมกัน
     cursor.execute('CREATE TABLE IF NOT EXISTS online_status (name TEXT PRIMARY KEY, last_seen DATETIME)')
 
+    # ตรวจสอบและอัปเดตคอลัมน์ผู้ใช้งาน
     cursor.execute("PRAGMA table_info(all_users)")
     columns = [row[1] for row in cursor.fetchall()]
     if 'promptpay' not in columns:
@@ -56,6 +59,7 @@ def init_db():
     if 'bank_account' not in columns:
         cursor.execute("ALTER TABLE all_users ADD COLUMN bank_account TEXT")
         
+    # ตรวจสอบและอัปเดตคอลัมน์วันที่ทริป
     cursor.execute("PRAGMA table_info(trips)")
     trip_columns = [row[1] for row in cursor.fetchall()]
     if 'trip_date' not in trip_columns:
@@ -73,6 +77,7 @@ def compress_image(uploaded_file):
     img.save(buffer, format="JPEG", quality=70)
     return buffer.getvalue()
 
+# ฟังก์ชันอัปเดตสัญญาณชีพ (Heartbeat) บ่งบอกสถานะออนไลน์
 def update_online_heartbeat(username):
     if username:
         conn = get_db_connection()
@@ -81,30 +86,32 @@ def update_online_heartbeat(username):
         conn.commit()
         conn.close()
 
+# ฟังก์ชันดึงรายชื่อผู้ใช้ที่กำลังออนไลน์อยู่ ณ ปัจจุบัน (ใครขยับภายใน 15 วินาทีล่าสุด)
 def get_currently_online_users():
     conn = get_db_connection()
-    # เนื่องจากเรารีเฟรชทุก 1 วินาที จึงปรับเวลาบีบให้แคบลงเป็น 15 วินาทีล่าสุด เพื่อความเรียลไทม์ (ถ้าใครปิดแท็บไป ไฟจะดับไวขึ้น)
     rows = conn.execute("SELECT name FROM online_status WHERE last_seen >= datetime('now', 'localtime', '-15 seconds')").fetchall()
     conn.close()
     return [row["name"] for row in rows]
 
+# รันเริ่มระบบฐานข้อมูล
 init_db()
 
-# --- จัดการ Session ของ User แต่ละเครื่อง ---
+# 3. จัดการ Session สมาชิกในคอมพิวเตอร์เครื่องนั้นๆ
 if "current_online_user" not in st.session_state:
     st.session_state["current_online_user"] = None
 
-# เรียกใช้ Heartbeat ทุกๆ วินาทีที่หน้าจอรีเฟรชตัวเอง เพื่อส่งสถานะไปยัง DB กลาง
+# ส่งสัญญาณสถานะออนไลน์ต่อเนื่องเมื่อหน้าจอรีเฟรชตัวเองทุกๆ 1 วินาที
 if st.session_state["current_online_user"]:
     update_online_heartbeat(st.session_state["current_online_user"])
 
-# --- 3. Sidebar ---
+# --- 4. เมนูข้าง SIDEBAR ---
 st.sidebar.header("🔐 บัญชีผู้ใช้งานเครื่องนี้")
 
 conn = get_db_connection()
 existing_all_users = [row["name"] for row in conn.execute("SELECT name FROM all_users").fetchall()]
 conn.close()
 
+# ตรวจสอบสถานะการล็อกอินโปรไฟล์ของแท็บเบราว์เซอร์นี้
 if st.session_state["current_online_user"] is None:
     st.sidebar.warning("⚠️ เครื่องนี้ยังไม่ได้ล็อกอินโปรไฟล์")
     login_mode = st.sidebar.radio("ทางเลือกบัญชี:", ["เลือกโปรไฟล์ที่มีอยู่", "สร้างโปรไฟล์ใหม่"], horizontal=True)
@@ -168,7 +175,7 @@ else:
         st.session_state["current_online_user"] = None
         st.rerun()
 
-# ====== ส่วนแสดงรายชื่อสมาชิกที่กำลัง ONLINE ร่วมกันในระบบ ======
+# 🌐 ====== ส่วนแสดงรายชื่อสมาชิกที่กำลัง ONLINE ร่วมกันในระบบปัจจุบัน ======
 st.sidebar.markdown("---")
 st.sidebar.subheader("🌐 สมาชิกที่ออนไลน์ในขณะนี้")
 online_users = get_currently_online_users()
@@ -203,7 +210,7 @@ if st.sidebar.button("สร้าง Event ใหม่"):
     else:
         st.sidebar.error("⚠️ กรุณากรอกชื่อ Event")
 
-# --- ส่วนถังขยะ ---
+# --- ส่วนจัดการระบบถังขยะ ---
 conn = get_db_connection()
 with st.sidebar.expander("🗑️ ถังขยะ"):
     deleted_trips = conn.execute("SELECT * FROM trips WHERE status = 1").fetchall()
@@ -242,9 +249,10 @@ if not active_trips_df.empty:
 else:
     active_trip_display_list = []
 
+# หยุดการทำงานชั่วคราวหากยังไม่มี Event ในฐานข้อมูล
 if not active_trip_display_list:
     st.title("✈️ Trip Expense Splitter Pro")
-    st.info("กรุณาสร้าง Event ใหม่ หรือกู้คืนจากถังขยะที่เมนูซ้ายมือ")
+    st.info("กรุณาสร้าง Event ใหม่ หรือกู้คืนจากถังขยะที่เมนูซ้ายมือเพื่อเริ่มต้นระบบ")
     st.stop()
 
 st.sidebar.markdown("---")
@@ -301,6 +309,7 @@ if existing_members:
         m_col1, m_col2 = st.sidebar.columns([4, 1])
         is_me = f" (คุณ)" if member == st.session_state["current_online_user"] else ""
         
+        # 🟢 ไฟสถานะเช็คจากกล่องเวลา 15 วินาทีล่าสุด
         is_online_dot = "🟢 " if member in online_users else "⚪ "
         m_col1.caption(f"{is_online_dot}{member}{is_me}")
         
@@ -321,7 +330,7 @@ if st.sidebar.button("ดึงเพื่อนเข้ากลุ่ม"):
         st.rerun()
 conn.close()
 
-# --- 4. Main UI ---
+# --- 5. พื้นที่ทำงานหลัก (Main UI Display) ---
 has_valid_date = current_trip_date and str(current_trip_date).strip() and not pd.isna(current_trip_date)
 
 if st.session_state["current_online_user"] is None:
@@ -340,6 +349,7 @@ st.title(f"✈️ ข้อมูล Event: {current_trip}")
 if has_valid_date:
     st.subheader(f"📅 วันที่จัด: {current_trip_date}")
 
+# แบ่งฟังก์ชันออกเป็น 3 แท็บหลัก
 tab1, tab2, tab3 = st.tabs(["📝 สร้างบิลใหม่", "📊 ประวัติบันทึกบิล", "💰 สรุปเคลียร์เงินสมาชิก"])
 
 with tab1:
@@ -372,7 +382,7 @@ with tab2:
     conn = get_db_connection()
     expenses = conn.execute("SELECT * FROM expenses WHERE trip_id = ?", (trip_id,)).fetchall()
     conn.close()
-    if not expenses: st.info("ยังไม่มีข้อมูลค่าใช้จ่ายในกลุ่มนี้")
+    if not expenses: st.info("ยังไม่มีข้อมูลค่าใช้จ่ายในกลุ่มนี้ รายการจะอัปเดตทันทีเมื่อเครื่องอื่นกรอกข้อมูล")
     else:
         for row in expenses:
             with st.expander(f"📌 {row['description']} | {row['amount']:,.2f} บาท (โดย {row['payer_name']})"):

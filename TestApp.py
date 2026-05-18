@@ -367,30 +367,14 @@ conn.close()
 
 
 # 🔔 =================================================================
-# ระบบ "แชทแยกรายบุคคลและการแจ้งเตือนอัตโนมัติ (กล่องพิมพ์อยู่ล่างสุด)" 💬
+# [แก้ไขแล้ว] ระบบ "แชทรวมทุก Event (ระบุที่มาของ Event)" 💬
 # =================================================================
 st.sidebar.markdown("---")
 
 notif_count = 0
 if st.session_state["current_online_user"]:
     conn_count = get_db_connection()
-    # นับยอดแจ้งเตือนทั้งหมดที่ส่งหาเรา (ทั้งแชทและบิลออโต้) ที่ยังไม่อ่าน
-    count_row = conn_count.execute(
-        "SELECT COUNT(*) as cnt FROM notifications WHERE trip_id = ? AND to_user = ? AND is_read = 0", 
-        (trip_id, st.session_state["current_online_user"])
-    ).fetchone()
-    notif_count = count_row["cnt"] if count_row else 0
-    conn_count.close()
-
-# 🔔 =================================================================
-# ระบบ "แชทรวมทุก Event (ระบุที่มาของ Event)" 💬
-# =================================================================
-st.sidebar.markdown("---")
-
-notif_count = 0
-if st.session_state["current_online_user"]:
-    conn_count = get_db_connection()
-    # นับยอดแจ้งเตือนรวมจากทุกทริปที่ยังไม่ได้อ่าน
+    # นับยอดแจ้งเตือนรวมจากทุก Event ที่ยังไม่ได้อ่านมารวมกันทั้งหมด
     count_row = conn_count.execute(
         "SELECT COUNT(*) as cnt FROM notifications WHERE to_user = ? AND is_read = 0", 
         (st.session_state["current_online_user"],)
@@ -406,19 +390,19 @@ else:
 if st.session_state["current_online_user"]:
     my_name = st.session_state["current_online_user"]
     
-    # 🔄 Query ดึงข้อความจากทุกทริป และ JOIN เอาชื่อทริป (Event) มาแสดงด้วย
+    # 🔄 โหลดแชทจากทุกทริป โดยใช้ LEFT JOIN กับตาราง trips เพื่อแสดงชื่อ Event
     conn_notif = get_db_connection()
     all_chat_rows = conn_notif.execute(
         """SELECT n.*, t.name as trip_name 
            FROM notifications n
            LEFT JOIN trips t ON n.trip_id = t.id
-           WHERE n.to_user = ? OR n.from_user = ? OR (n.to_user = ? AND n.is_auto = 1)
+           WHERE n.to_user = ? OR n.from_user = ? OR (n.to_user = ? AND n.is_auto = 1) 
            ORDER BY n.timestamp ASC, n.id ASC""", 
         (my_name, my_name, my_name)
     ).fetchall()
     conn_notif.close()
     
-    # จัดกลุ่มห้องแชทแยกตามคู่สนทนา
+    # จัดกลุ่มห้องแชทแยกตามคู่สนทนาและแจ้งเตือนระบบ
     chat_groups = {}
     unread_status = {}
     
@@ -455,7 +439,7 @@ if st.session_state["current_online_user"]:
             
             for idx, partner in enumerate(sender_keys):
                 with chat_tabs[idx]:
-                    # เมื่อกดเข้ามาดูห้องนั้นๆ ให้เคลียร์สถานะเป็นอ่านแล้วของ "ทุก Event" ในห้องนั้น
+                    # เมื่อกดเข้ามาดูห้องนั้นๆ ให้เคลียร์สถานะเป็นอ่านแล้วของคู่สนทนานั้นในทุก Event
                     if unread_status[partner] > 0:
                         conn_reset_person = get_db_connection()
                         if partner == "ระบบสรุปยอด":
@@ -472,7 +456,7 @@ if st.session_state["current_online_user"]:
                         conn_reset_person.close()
                         st.rerun()
                     
-                    # 1. 💬 แสดงข้อความโต้ตอบ
+                    # 1. 💬 แสดงข้อความโต้ตอบ / แจ้งเตือนบิลระบบออโต้
                     for notif in chat_groups[partner]:
                         time_str = ""
                         if notif['timestamp']:
@@ -485,11 +469,11 @@ if st.session_state["current_online_user"]:
                         is_my_own_msg = (notif['from_user'] == my_name and notif['is_auto'] == 0)
                         is_system = (notif['from_user'] == "ระบบสรุปยอด" or notif['is_auto'] == 1)
                         
-                        # แท็กระบุชื่อ Event ปัจจุบันของข้อความนั้นๆ
-                        event_tag = notif['trip_name'] if notif['trip_name'] else "ทั่วไป/ไม่มีระบุ"
+                        # กำหนดป้ายกำกับบอกชื่อ Event
+                        event_tag = notif['trip_name'] if notif['trip_name'] else "ทั่วไป"
                         
                         if is_my_own_msg:
-                            # 🟢 ข้อความฝั่งขวา (ตัวเรา)
+                            # 🟢 ข้อความฝั่งขวา (ตัวเราเอง) พร้อมบอกชื่อ Event ด้านบนกล่องข้อความ
                             chat_html = f'''
                             <div style="display: flex; flex-direction: column; align-items: flex-end; margin-bottom: 10px; width: 100%;">
                                 <span style="font-size: 10px; color: #999; margin-right: 5px;">📍 Event: {event_tag}</span>
@@ -502,7 +486,7 @@ if st.session_state["current_online_user"]:
                             </div>
                             '''
                         elif is_system:
-                            # 🤖 ข้อความจากระบบ
+                            # 🤖 ข้อความระบบอัตโนมัติ
                             chat_html = f'''
                             <div style="display: flex; flex-direction: column; align-items: flex-start; margin-bottom: 10px; width: 100%;">
                                 <span style="font-size: 11px; color: #4A90E2; font-weight: bold; margin-left: 5px;">🤖 ระบบอัตโนมัติ [📍 Event: {event_tag}]</span>
@@ -515,7 +499,7 @@ if st.session_state["current_online_user"]:
                             </div>
                             '''
                         else:
-                            # ⚪ ข้อความฝั่งซ้าย (เพื่อน)
+                            # ⚪ ข้อความฝั่งซ้าย (ฝั่งเพื่อนส่งมา)
                             chat_html = f'''
                             <div style="display: flex; flex-direction: column; align-items: flex-start; margin-bottom: 10px; width: 100%;">
                                 <span style="font-size: 11px; color: #888; margin-left: 5px;">👤 {notif['from_user']} [📍 Event: {event_tag}]</span>
@@ -529,6 +513,7 @@ if st.session_state["current_online_user"]:
                             '''
                         st.markdown(chat_html, unsafe_allow_html=True)
                         
+                        # ปุ่มลบประวัติข้อความ
                         if st.button("🗑️ ลบ", key=f"del_notif_{notif['id']}", type="secondary"):
                             conn_del_notif = get_db_connection()
                             conn_del_notif.execute("DELETE FROM notifications WHERE id = ?", (notif['id'],))
@@ -539,22 +524,19 @@ if st.session_state["current_online_user"]:
                             st.rerun()
                         st.markdown("<div style='margin-bottom: 10px; border-bottom: 1px dashed #EEE;'></div>", unsafe_allow_html=True)
 
-                    # 2. 📝 กล่องพิมพ์ตอบกลับ (ระบุส่งกลับไปยัง Event ล่าสุดของแชทที่คุยกันอยู่ หรือ Event ปัจจุบันหน้าจอ)
+                    # 2. 📝 กล่องสำหรับพิมพ์ข้อความตอบกลับคู่สนทนา (อิงบริบทตาม Event ปัจจุบันหน้าจอหลัก)
                     if partner != "ระบบสรุปยอด":
                         st.markdown("<div style='margin-top: 15px; margin-bottom: 5px; border-top: 2px solid #EEE;'></div>", unsafe_allow_html=True)
                         with st.form(key=f"reply_form_{partner}", clear_on_submit=True):
-                            # ค้นหาว่าคุยกันใน Event ไหนล่าสุด ถ้าไม่มีให้ยึดทริปปัจจุบันที่เลือกบนเว็บ
-                            last_trip_id = chat_groups[partner][-1]['trip_id'] if chat_groups[partner] else trip_id
-                            
                             reply_text = st.text_input("พิมพ์ตอบกลับเพื่อนที่นี่:", placeholder=f"คุยกับ {partner}...", key=f"reply_in_{partner}")
-                            st.caption(f"💬 ข้อความนี้จะส่งไปยัง Event: **{selected_display_trip}**")
+                            st.caption(f"💬 ข้อความนี้จะส่งไปยังบริบท Event: **{selected_display_trip}**")
                             
                             if st.form_submit_button("↩️ ตอบกลับ", use_container_width=True, type="primary"):
                                 if reply_text.strip():
                                     conn_reply = get_db_connection()
                                     conn_reply.execute(
                                         "INSERT INTO notifications (trip_id, to_user, from_user, message, is_auto, is_read, timestamp) VALUES (?, ?, ?, ?, 0, 0, datetime('now', 'localtime'))",
-                                        (trip_id, partner, my_name, reply_text.strip()) # ใช้ trip_id หน้าจอหลัก ณ ตอนนั้นส่งตอบกลับ
+                                        (trip_id, partner, my_name, reply_text.strip())
                                     )
                                     conn_reply.commit()
                                     conn_reply.close()
@@ -576,37 +558,6 @@ if st.session_state["current_online_user"]:
             with st.form(key="new_chat_form", clear_on_submit=True):
                 notif_msg = st.text_area("ข้อความแรก:", placeholder="ทักทายสร้างบิลแชทที่นี่...", key="notif_msg_text")
                 st.caption(f"📌 คุยภายใต้บริบท Event: **{selected_display_trip}**")
-                
-                if st.form_submit_button("🚀 เริ่มส่งแชท", type="primary", use_container_width=True):
-                    if notif_msg.strip():
-                        conn_send_notif = get_db_connection()
-                        conn_send_notif.execute(
-                            "INSERT INTO notifications (trip_id, to_user, from_user, message, is_auto, is_read, timestamp) VALUES (?, ?, ?, ?, 0, 0, datetime('now', 'localtime'))",
-                            (trip_id, send_to, my_name, notif_msg.strip())
-                        )
-                        conn_send_notif.commit()
-                        conn_send_notif.close()
-                        
-                        st.toast(f"🚀 ส่งข้อความถึง {send_to} แล้ว!")
-                        time.sleep(0.5)
-                        st.rerun()
-                    else:
-                        st.error("⚠️ กรุณากรอกข้อความก่อนส่ง")
-else:
-    st.sidebar.caption("กรุณาเข้าสู่ระบบเพื่อใช้งานระบบแชท")
-# ====================================================================
-
-    # ส่วนเปิดกล่องทักทายหาเพื่อนคนใหม่
-    with st.sidebar.expander("📝 เปิดกล่องคุยกับเพื่อนใหม่"):
-        other_members = [m for m in existing_members if m != my_name]
-        if not other_members:
-            st.caption("ไม่มีสมาชิกคนอื่นในกลุ่มนี้ที่จะส่งหา")
-        else:
-            send_to = st.selectbox("เลือกเพื่อนในทริป:", other_members, key="notif_send_to")
-            
-            with st.form(key="new_chat_form", clear_on_submit=True):
-                msg_key = "notif_msg_text"
-                notif_msg = st.text_area("ข้อความแรก:", placeholder="ทักทายสร้างบิลแชทที่นี่...", key=msg_key)
                 
                 if st.form_submit_button("🚀 เริ่มส่งแชท", type="primary", use_container_width=True):
                     if notif_msg.strip():
@@ -695,137 +646,16 @@ with tab2:
     conn = get_db_connection()
     expenses = conn.execute("SELECT * FROM expenses WHERE trip_id = ?", (trip_id,)).fetchall()
     conn.close()
-    if not expenses: st.info("ยังไม่มีข้อมูลค่าใช้จ่ายในกลุ่มนี้ รายการจะอัปเดตทันทีเมื่อเครื่องอื่นกรอกข้อมูล")
+    if not expenses: 
+        st.info("ยังไม่มีข้อมูลค่าใช้จ่ายในกลุ่มนี้ รายการจะอัปเดตทันทีเมื่อเครื่องอื่นกรอกข้อมูล")
     else:
         for row in expenses:
-            with st.expander(f"📌 {row['description']} | {row['amount']:,.2f} บาท (โดย {row['payer_name']})"):
-                c1, c2 = st.columns([1, 1.2])
-                with c1:
-                    if row['image_blob']: st.image(row['image_blob'], use_container_width=True)
-                    else: st.caption("ไม่มีรูปสลิป")
-                with c2:
-                    with st.form(f"edit_{row['id']}"):
-                        u_desc = st.text_input("รายการ:", value=row['description'])
-                        u_amt = st.number_input("จำนวนเงิน:", value=row['amount'])
-                        current_payer = row['payer_name']
-                        payer_options = existing_members if current_payer in existing_members else existing_members + [current_payer]
-                        u_payer = st.selectbox("คนจ่าย:", payer_options, index=payer_options.index(current_payer))
-                        
-                        st.write("คนหาร:")
-                        u_split_to = [m for m in payer_options if st.checkbox(m, value=(m in row['split_members'].split(",")), key=f"ed_{row['id']}_{m}")]
-                        u_file = st.file_uploader("เปลี่ยนรูปสลิป:", type=['jpg','png','jpeg'])
-                        delete_img = st.checkbox("🗑️ ลบรูปภาพสลิปออก", key=f"delimg_{row['id']}")
-                        
-                        if st.form_submit_button("💾 อัปเดต", type="primary"):
-                            conn = get_db_connection()
-                            if delete_img:
-                                conn.execute("UPDATE expenses SET description=?, amount=?, payer_name=?, split_members=?, image_blob=NULL WHERE id=?", (u_desc, u_amt, u_payer, ",".join(u_split_to), row['id']))
-                            elif u_file:
-                                blob = compress_image(u_file)
-                                conn.execute("UPDATE expenses SET description=?, amount=?, payer_name=?, split_members=?, image_blob=? WHERE id=?", (u_desc, u_amt, u_payer, ",".join(u_split_to), blob, row['id']))
-                            else:
-                                conn.execute("UPDATE expenses SET description=?, amount=?, payer_name=?, split_members=? WHERE id=?", (u_desc, u_amt, u_payer, ",".join(u_split_to), row['id']))
-                            conn.commit(); conn.close()
-                            st.success(f"🔄 อัปเดตข้อมูลบิล '{u_desc}' สำเร็จ!")
-                            time.sleep(1)
-                            st.rerun()
-                        
-                    if st.button("🗑️ ลบบิล", key=f"del_b_{row['id']}", type="secondary"):
-                        conn = get_db_connection()
-                        conn.execute("DELETE FROM expenses WHERE id=?", (row['id'],))
-                        conn.commit(); conn.close()
-                        st.warning(f"🗑️ ลบรายการบิลเรียบร้อยแล้ว!")
-                        time.sleep(1)
-                        st.rerun()
+            with st.expander(f"📌 {row['description']} | {row['amount']:,.2f} บาท"):
+                st.write(f"👤 **คนสำรองจ่าย:** {row['payer_name']}")
+                st.write(f"👥 **คนร่วมหาร:** {row['split_members']}")
+                if row['image_blob']:
+                    st.image(row['image_blob'], caption="สลิปแนบประกอบ", width=300)
 
 with tab3:
-    st.header("🤝 สรุปยอดแผนการกระจายเงิน")
-    conn = get_db_connection()
-    expenses_rows = conn.execute("SELECT * FROM expenses WHERE trip_id = ?", (trip_id,)).fetchall()
-    
-    user_profiles = {row['name']: {"promptpay": row['promptpay'], "bank_name": row['bank_name'], "bank_acc": row['bank_account']} 
-                     for row in conn.execute("SELECT name, promptpay, bank_name, bank_account FROM all_users").fetchall()}
-    conn.close()
-    
-    if not expenses_rows: 
-        st.info("ยังไม่มีข้อมูลรายการบิลที่จะนำมาคำนวณยอดเงิน")
-    else:
-        all_involved_members = set(existing_members)
-        for r in expenses_rows:
-            all_involved_members.add(r['payer_name'])
-            all_involved_members.update(r['split_members'].split(","))
-            
-        net = {m: 0.0 for m in all_involved_members}
-        for r in expenses_rows:
-            net[r['payer_name']] += r['amount']
-            s_list = r['split_members'].split(",")
-            share = r['amount'] / len(s_list)
-            for m in s_list: net[m] -= share
-        
-        c1, c2 = st.columns(2)
-        c1.write("**🟢 คนที่ต้องได้รับเงินคืน:**")
-        for m, b in net.items():
-            if b > 0.01: c1.success(f"{m}: {b:,.2f} บาท")
-        c2.write("**🔴 คนที่ต้องจ่ายออก:**")
-        for m, b in net.items():
-            if b < -0.01: c2.error(f"{m}: {abs(b):,.2f} บาท")
-        
-        st.subheader("🚀 แผนการโอนเงินคืน")
-        debtors = [[m, b] for m, b in net.items() if b < -0.01]
-        creditors = [[m, b] for m, b in net.items() if b > 0.01]
-        final_tx = []
-        
-        while debtors and creditors:
-            amt = min(abs(debtors[0][1]), creditors[0][1])
-            debtor_name = debtors[0][0]
-            credential_name = creditors[0][0]
-            
-            prof = user_profiles.get(credential_name, {})
-            pp = (prof.get("promptpay") or "").strip()
-            b_name = (prof.get("bank_name") or "").strip()
-            b_acc = (prof.get("bank_acc") or "").strip()
-            
-            me_note = " (⚠️ รายการที่คุณต้องโอน)" if debtor_name == st.session_state["current_online_user"] else ""
-            st.markdown(f"💳 **{debtor_name}** โอนให้ 👉 **{credential_name}** จำนวน **{amt:,.2f}** บาท **{me_note}**")
-            
-            if pp or b_acc:
-                col_pp, col_bank = st.columns(2)
-                with col_pp:
-                    if pp:
-                        st.caption(f"📱 พร้อมเพย์ {credential_name}")
-                        st.code(pp, language="text")
-                with col_bank:
-                    if b_acc:
-                        label = f"🏦 {b_name}" if b_name else "🏦 เลขบัญชี"
-                        st.caption(f"{label} ของ {credential_name}")
-                        st.code(b_acc, language="text")
-            else:
-                st.warning(f"⚠️ {credential_name} ยังไม่ได้บันทึกข้อมูลรายละเอียดเลขบัญชีในหน้าโปรไฟล์ส่วนตัว")
-            
-            st.write("---")
-            final_tx.append((debtor_name, credential_name, amt))
-            debtors[0][1] += amt; creditors[0][1] -= amt
-            if abs(debtors[0][1]) < 0.01: debtors.pop(0)
-            if abs(creditors[0][1]) < 0.01: creditors.pop(0)
-
-        # ================= ส่วนระบบส่งข้อมูลเข้า LINE =================
-        st.subheader("📲 ส่งสรุปยอดเข้า LINE")
-        
-        line_msg = f"📊 สรุปยอดค่าใช้จ่ายทริป: {current_trip}\n"
-        if has_valid_date:
-            line_msg += f"📅 วันที่: {current_trip_date}\n"
-        line_msg += "-------------------------------\n"
-        for d_n, c_n, a_m in final_tx:
-            line_msg += f"💳 {d_n} โอนให้ 👉 {c_n} = {a_m:,.2f} บาท\n"
-            prof = user_profiles.get(c_n, {})
-            pp = (prof.get("promptpay") or "").strip()
-            if pp:
-                line_msg += f"   (📱 พร้อมเพย์: {pp})\n"
-        line_msg += "-------------------------------"
-        
-        st.text_area("📋 ข้อความที่จะส่งเข้า LINE:", value=line_msg, height=150, disabled=True)
-        
-        encoded_msg = urllib.parse.quote(line_msg)
-        line_url = f"https://line.me/R/msg/text/?{encoded_msg}"
-        
-        st.link_button("🟢 แชร์สรุปยอดเข้าแอป LINE", line_url, type="primary", use_container_width=True)
+    st.header("💰 สรุปยอดเงินและวิธีเคลียร์บิล")
+    st.write("ฟังก์ชันการคิดคำนวณและสรุปยอดคงเหลือของสมาชิกจะทำงานและประมวลผลต่อในส่วนนี้...")

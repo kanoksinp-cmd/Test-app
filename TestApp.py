@@ -570,6 +570,32 @@ with tab3:
             if abs(debtors[0][1]) < 0.01: debtors.pop(0)
             if abs(creditors[0][1]) < 0.01: creditors.pop(0)
 
+        # ====================================================================
+        # 🔔 🟢 ระบบส่งยอดเข้ากล่องข้อความออโตเมติก เมื่อมีการเปิดดูหน้าสรุปเคลียร์เงิน
+        # ====================================================================
+        current_viewer = st.session_state["current_online_user"]
+        conn_auto_notif = get_db_connection()
+        
+        for d_n, c_n, a_m in final_tx:
+            # รูปแบบข้อความสั้นกระชับเข้าใจง่าย
+            auto_msg = f"🔔 ยอดสรุปทริป {current_trip}: คุณมีค้างโอนให้ [{c_n}] จำนวน {a_m:,.2f} บาท รบกวนตรวจสอบในแท็บสรุปเงินด้วยน้า 🙏"
+            
+            # เช็คก่อนว่าเคยส่งข้อความตัวนี้เป๊ะๆ ไปหาลูกหนี้คนนี้แล้วหรือยัง (ป้องกันระบบยิงข้อความซ้ำจากการ Autorefresh ทุก 1 วินาที)
+            already_sent = conn_auto_notif.execute(
+                "SELECT id FROM notifications WHERE trip_id = ? AND to_user = ? AND message = ?",
+                (trip_id, d_n, auto_msg)
+            ).fetchone()
+            
+            # ถ้ายังไม่มีข้อความนี้ ให้เขียนบันทึกลงตารางทันที
+            if not already_sent:
+                conn_auto_notif.execute(
+                    "INSERT INTO notifications (trip_id, to_user, from_user, message) VALUES (?, ?, ?, ?)",
+                    (trip_id, d_n, current_viewer if current_viewer else "ระบบสรุปยอด", auto_msg)
+                )
+        conn_auto_notif.commit()
+        conn_auto_notif.close()
+        # ====================================================================
+
         # ================= ส่วนระบบส่งข้อมูลเข้า LINE =================
         st.subheader("📲 ส่งสรุปยอดเข้า LINE")
         

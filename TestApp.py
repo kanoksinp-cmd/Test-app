@@ -448,6 +448,30 @@ with tab3:
             s_list = r['split_members'].split(",")
             share = r['amount'] / len(s_list)
             for m in s_list: net[m] -= share
+
+        # ================= ส่วนระบบแจ้งเตือนสมาชิกรายบุคคลและภาพรวมกลุ่ม =================
+        st.markdown("### 🔔 กล่องแจ้งเตือนสถานะการเงินส่วนบุคคล")
+        my_name = st.session_state["current_online_user"]
+        
+        if my_name in net:
+            my_balance = net[my_name]
+            if my_balance < -0.01:
+                st.error(f"🔴 **⚠️ คุณมียอดค้างชำระ:** สวัสดีคุณ **{my_name}** บิลทริปนี้คุณมียอดที่ **ต้องจ่ายออก** ทั้งหมด **{abs(my_balance):,.2f}** บาท กรุณาเคลียร์เงินให้เพื่อนด้วยน้าา")
+            elif my_balance > 0.01:
+                st.success(f"🟢 **💰 ยอดรอรับคืน:** ยินดีด้วยคุณ **{my_name}** คุณสำรองจ่ายไปเยอะ ทริปนี้คุณมียอดที่ **จะได้คืน** ทั้งหมด **{my_balance:,.2f}** บาท")
+            else:
+                st.info(f"🔵 **✅ เคลียร์เรียบร้อย:** คุณ **{my_name}** ยอดเงินของคุณลงตัวพอดีเป๊ะ ไม่มีส่วนต่างค้างจ่ายหรือได้รับคืน")
+        
+        # กล่องสำหรับรวมรายชื่อสมาชิก "ทุกคนที่ยังไม่ได้จ่ายเงิน" ให้เห็นชัดเจน
+        with st.expander("🚨 เช็ครายชื่อเพื่อนๆ ที่ต้องจ่ายเงินในทริปนี้", expanded=True):
+            debtors_list = {m: b for m, b in net.items() if b < -0.01}
+            if debtors_list:
+                for member, balance in debtors_list.items():
+                    st.warning(f"💸 **{member}** ยังมียอดต้องโอนออกจำนวน: **{abs(balance):,.2f}** บาท")
+            else:
+                st.success("🎉 ดีเยี่ยม! ตอนนี้ทุกคนเคลียร์ยอดเท่ากันหมดแล้ว ไม่มีใครค้างจ่าย")
+        st.markdown("---")
+        # =========================================================================
         
         c1, c2 = st.columns(2)
         c1.write("**🟢 คนที่ต้องได้รับเงินคืน:**")

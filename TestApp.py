@@ -11,6 +11,55 @@ from streamlit_autorefresh import st_autorefresh
 # 1. ตั้งค่าหน้าจอและโครงสร้างพื้นฐาน
 st.set_page_config(page_title="Trip Expense Splitter Pro", layout="wide")
 
+# 📊 🛠️ แทรก CSS เพื่อลดขนาดฟอนต์ ช่องอินพุต และส่วนประกอบต่าง ๆ ลง 50%
+st.markdown("""
+    <style>
+    /* ลดขนาดฟอนต์พื้นฐานทั้งหน้าเว็บ */
+    html, body, [class*="css"], .stMarkdown, p, span, label {
+        font-size: 13px !important;
+    }
+    /* ลดขนาดหัวข้อหลัก (Title) จาก ~42px เหลือ ~20px */
+    h1 {
+        font-size: 20px !important;
+        margin-bottom: 5px !important;
+        padding-top: 5px !important;
+    }
+    /* ลดขนาดหัวข้อรอง (Header) จาก ~32px เหลือ ~16px */
+    h2 {
+        font-size: 16px !important;
+        margin-top: 5px !important;
+        margin-bottom: 5px !important;
+    }
+    /* ลดขนาดหัวข้อย่อย (Subheader) จาก ~24px เหลือpx */
+    h3 {
+        font-size: 14px !important;
+        margin-top: 5px !important;
+        margin-bottom: 5px !important;
+    }
+    /* ลดขนาดความสูงและช่องว่างของปุ่มต่างๆ */
+    .stButton>button {
+        font-size: 12px !important;
+        padding: 4px 10px !important;
+        min-height: auto !important;
+    }
+    /* ลดขนาดและช่องว่างของกล่องกรอกข้อมูล (Input, Selectbox) */
+    div[data-baseweb="select"], div[data-baseweb="input"], input {
+        font-size: 12px !important;
+        padding: 2px 4px !important;
+    }
+    /* ลดขนาดระยะห่างระหว่างบล็อก (Padding) ของ Streamlit เพื่อให้กระชับขึ้น */
+    .block-container {
+        padding-top: 1rem !important;
+        padding-bottom: 1rem !important;
+    }
+    /* ลดขนาดส่วนของกล่อง Expander */
+    .streamlit-expanderHeader {
+        font-size: 12px !important;
+        padding: 5px !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
 # 🔄 สั่งให้ Streamlit รีเฟรชหน้าจออัตโนมัติทุกๆ 1,000 มิลลิวินาที (1 วินาที)
 st_autorefresh(interval=1000, limit=None, key="trip_app_live_refresh")
 
@@ -113,10 +162,9 @@ if st.session_state["current_online_user"]:
 # 🗺️ 3. ส่วนหัวและเมนูด้านบนเว็บไซต์ (TOP MENU BAR)
 # ==========================================
 st.title("✈️ Trip Expense Splitter Pro")
-st.markdown("---")
 
 # ใช้ระบบ Columns ในการแบ่งสัดส่วนเมนูด้านบน
-top_col1, top_col2, top_col3 = st.columns([1.5, 1.5, 1.5], gap="medium")
+top_col1, top_col2, top_col3 = st.columns([1.5, 1.5, 1.5], gap="small")
 
 conn = get_db_connection()
 existing_all_users = [row["name"] for row in conn.execute("SELECT name FROM all_users").fetchall()]
@@ -124,12 +172,12 @@ conn.close()
 
 # --- COLUMN 1: บัญชีผู้ใช้งานเครื่องนี้ ---
 with top_col1:
-    st.subheader("🔐 บัญชีผู้ใช้งานเครื่องนี้")
+    st.subheader("🔐 บัญชีผู้ใช้งาน")
     if st.session_state["current_online_user"] is None:
         st.warning("⚠️ ยังไม่ได้ล็อกอินโปรไฟล์")
-        login_mode = st.radio("ทางเลือกบัญชี:", ["เลือกโปรไฟล์ที่มีอยู่", "สร้างโปรไฟล์ใหม่"], horizontal=True, key="top_login_mode")
+        login_mode = st.radio("ทางเลือกบัญชี:", ["เลือกโปรไฟล์", "สร้างใหม่"], horizontal=True, key="top_login_mode")
         
-        if login_mode == "เลือกโปรไฟล์ที่มีอยู่":
+        if login_mode == "เลือกโปรไฟล์":
             if existing_all_users:
                 user_select = st.selectbox("เลือกชื่อของคุณ:", existing_all_users, key="top_select_user")
                 if st.button("เข้าสู่ระบบ", key="top_btn_login", use_container_width=True):
@@ -139,9 +187,9 @@ with top_col1:
                     time.sleep(1)
                     st.rerun()
             else:
-                st.caption("ยังไม่มีข้อมูลสมาชิกในระบบ กรุณาสร้างใหม่")
+                st.caption("ยังไม่มีข้อมูลสมาชิกในระบบ")
         else:
-            new_online_name = st.text_input("ระบุชื่อเล่น/ชื่อของคุณ:", key="top_new_name").strip()
+            new_online_name = st.text_input("ระบุชื่อของคุณ:", key="top_new_name").strip()
             if st.button("สร้างและเข้าสู่ระบบ", key="top_btn_create", use_container_width=True):
                 if new_online_name:
                     try:
@@ -175,7 +223,7 @@ with top_col1:
                 conn.execute("UPDATE all_users SET promptpay = ?, bank_name = ?, bank_account = ? WHERE name = ?", 
                              (edit_pp, final_bank, edit_bank_acc, st.session_state["current_online_user"]))
                 conn.commit(); conn.close()
-                st.toast("💾 บันทึกโปรไฟล์ส่วนตัวสำเร็จ!")
+                st.toast("💾 บันทึกโปรไฟล์สำเร็จ!")
                 time.sleep(1)
                 st.rerun()
                 
@@ -188,7 +236,7 @@ with top_col1:
 
 # --- COLUMN 2: การเลือกและจัดการ Event ---
 with top_col2:
-    st.subheader("🗺️ เลือกหรือสร้าง Event")
+    st.subheader("🗺️ จัดการ Event")
     conn = get_db_connection()
     active_trips_df = pd.read_sql_query("SELECT * FROM trips WHERE status = 0", conn)
     
@@ -201,7 +249,7 @@ with top_col2:
         active_trip_display_list = []
 
     if active_trip_display_list:
-        selected_display_trip = st.selectbox("เลือก Event ที่ต้องการดู:", active_trip_display_list, key="top_select_trip")
+        selected_display_trip = st.selectbox("เลือก Event:", active_trip_display_list, key="top_select_trip")
         matched_trip = active_trips_df[active_trips_df['display_name'] == selected_display_trip].iloc[0]
         current_trip = matched_trip['name']
         trip_id = int(matched_trip['id'])
@@ -215,23 +263,23 @@ with top_col2:
                 except: default_date = datetime.today()
                 re_date_input = st.date_input("แก้ไขวันที่:", value=default_date, key="top_redate")
                 
-                if st.button("💾 ยืนยันเปลี่ยนข้อมูล", key="top_confirm_rename", use_container_width=True):
+                if st.button("💾 ยืนยันเปลี่ยน", key="top_confirm_rename", use_container_width=True):
                     if rename_input:
                         try:
                             conn_rename = get_db_connection()
                             new_date_str = re_date_input.strftime("%Y-%m-%d")
                             conn_rename.execute("UPDATE trips SET name = ?, trip_date = ? WHERE id = ?", (rename_input, new_date_str, trip_id))
                             conn_rename.commit(); conn_rename.close()
-                            st.success("✏️ อัปเดตข้อมูลเรียบร้อย!")
+                            st.success("✏️ อัปเดตเรียบร้อย!")
                             time.sleep(1)
                             st.rerun()
-                        except: st.error("❌ ชื่อ Event นี้ซ้ำ")
+                        except: st.error("❌ ชื่อซ้ำ")
                     else: st.error("⚠️ กรุณากรอกชื่อ")
         with c_del:
             if st.button("🗑️ ลบ Event", key="top_del_trip", use_container_width=True):
                 conn.execute("UPDATE trips SET status = 1 WHERE id = ?", (trip_id,))
                 conn.commit()
-                st.toast(f"🗑️ ย้าย '{current_trip}' ลงถังขยะแล้ว")
+                st.toast(f"🗑️ ย้ายลงถังขยะแล้ว")
                 time.sleep(1)
                 st.rerun()
     else:
@@ -239,7 +287,7 @@ with top_col2:
         current_trip, trip_id, current_trip_date = None, None, None
 
     # ส่วนเสริม: สร้าง Event ใหม่ & ถังขยะ
-    with st.expander("➕ สร้าง Event ใหม่ / 🗑️ ถังขยะ"):
+    with st.expander("➕ สร้าง Event / 🗑️ ถังขยะ"):
         st.markdown("**➕ สร้าง Event ใหม่**")
         new_trip_name = st.text_input("ชื่อ Event:", key="top_new_trip_name").strip()
         new_trip_date = st.date_input("วันที่จัด Event:", value=datetime.today(), key="top_new_trip_date")
@@ -250,14 +298,14 @@ with top_col2:
                     date_str = new_trip_date.strftime("%Y-%m-%d")
                     conn_new.execute("INSERT INTO trips (name, status, trip_date) VALUES (?, 0, ?)", (new_trip_name, date_str))
                     conn_new.commit(); conn_new.close()
-                    st.success("✈️ สร้าง Event สำเร็จ!")
+                    st.success("✈️ สร้างสำเร็จ!")
                     time.sleep(1)
                     st.rerun()
-                except: st.error("❌ ชื่อ Event ซ้ำ")
-            else: st.error("⚠️ กรุณากรอกชื่อ Event")
+                except: st.error("❌ ชื่อซ้ำ")
+            else: st.error("⚠️ กรุณากรอกชื่อ")
         
         st.markdown("---")
-        st.markdown("**🗑️ รายการในถังขยะ**")
+        st.markdown("**🗑️ ถังขยะ**")
         deleted_trips = conn.execute("SELECT * FROM trips WHERE status = 1").fetchall()
         if not deleted_trips: st.caption("ไม่มีรายการในถังขยะ")
         for dt in deleted_trips:
@@ -270,18 +318,18 @@ with top_col2:
 
 # --- COLUMN 3: สมาชิกและสถานะออนไลน์ ---
 with top_col3:
-    st.subheader("👥 สมาชิกและสถานะออนไลน์")
+    st.subheader("👥 สมาชิก & ออนไลน์")
     online_users = get_currently_online_users()
     
-    with st.expander(f"🟢 ผู้ใช้งานที่ออนไลน์ขณะนี้ ({len(online_users)})"):
+    with st.expander(f"🟢 ผู้ที่ออนไลน์ขณะนี้ ({len(online_users)})"):
         if online_users:
             for o_user in online_users:
                 me_badge = " *(คุณ)*" if o_user == st.session_state["current_online_user"] else " *(คนอื่น)*"
                 st.markdown(f"🟢 **{o_user}** {me_badge}")
-        else: st.caption("ไม่มีผู้ใช้งานอื่นออนไลน์")
+        else: st.caption("ไม่มีคนอื่นออนไลน์")
 
     if trip_id:
-        st.markdown("**สมาชิกภายใน Event ปัจจุบัน:**")
+        st.markdown("**สมาชิกในทริป:**")
         conn = get_db_connection()
         all_users_list = [row["name"] for row in conn.execute("SELECT name FROM all_users").fetchall()]
         existing_members = [row["name"] for row in conn.execute("SELECT name FROM members WHERE trip_id = ?", (trip_id,)).fetchall()]
@@ -301,17 +349,17 @@ with top_col3:
                 conn.execute("DELETE FROM members WHERE trip_id = ? AND name = ?", (trip_id, member))
                 conn.commit(); st.rerun()
                 
-        selected_u = st.selectbox("ชวนเพื่อนออนไลน์เข้าร่วม:", ["-- เลือกเพื่อน --"] + available_users, key="top_add_member")
+        selected_u = st.selectbox("ชวนเพื่อนเข้าร่วมกลุ่ม:", ["-- เลือกเพื่อน --"] + available_users, key="top_add_member")
         if st.button("ดึงเข้ากลุ่ม", key="top_btn_add_member", use_container_width=True):
             if selected_u != "-- เลือกเพื่อน --":
                 conn.execute("INSERT INTO members (trip_id, name) VALUES (?, ?)", (trip_id, selected_u))
                 conn.commit(); st.rerun()
         conn.close()
 
-st.markdown("---")
+st.markdown("<hr style='margin: 10px 0;'>", unsafe_allow_html=True)
 
 # ==========================================
-# 🔔 4. ศูนย์แชทส่วนตัวด้านบนหลัก (ศูนย์ข้อความย้ายมาด้านบนก่อนเข้าตารางงาน)
+# 🔔 4. ศูนย์แชทส่วนตัวด้านบนหลัก
 # ==========================================
 if st.session_state["current_online_user"] and trip_id:
     my_name = st.session_state["current_online_user"]
@@ -319,7 +367,7 @@ if st.session_state["current_online_user"] and trip_id:
     count_row = conn_count.execute("SELECT COUNT(*) as cnt FROM notifications WHERE trip_id = ? AND to_user = ? AND is_read = 0", (trip_id, my_name)).fetchone()
     notif_count = count_row["cnt"] if count_row else 0
     
-    chat_title = f"📥 ศูนย์แชทและการแจ้งเตือนส่วนตัว 🔴 ({notif_count})" if notif_count > 0 else "📥 ศูนย์แชทและการแจ้งเตือนส่วนตัว"
+    chat_title = f"📥 ศูนย์แชท & การแจ้งเตือน 🔴 ({notif_count})" if notif_count > 0 else "📥 ศูนย์แชท & การแจ้งเตือน"
     
     with st.expander(chat_title):
         all_chat_rows = conn_count.execute(
@@ -337,7 +385,7 @@ if st.session_state["current_online_user"] and trip_id:
             if n['to_user'] == my_name and n['is_read'] == 0: unread_status[partner] += 1
             
         if not chat_groups:
-            st.caption("ไม่มีประวัติข้อความการแจ้งเตือน")
+            st.caption("ไม่มีประวัติข้อความ")
         else:
             sender_keys = list(chat_groups.keys())
             tab_labels = [f"🤖 ระบบ (🔴 {unread_status[p]})" if p == "ระบบสรุปยอด" else f"👤 {p} (🔴 {unread_status[p]})" if unread_status[p] > 0 else f"👤 {p}" for p in sender_keys]
@@ -356,11 +404,11 @@ if st.session_state["current_online_user"] and trip_id:
                     for notif in chat_groups[partner]:
                         time_str = notif['timestamp'][11:16] if notif['timestamp'] else ""
                         if notif['from_user'] == my_name and notif['is_auto'] == 0:
-                            st.markdown(f'<div style="text-align: right;"><span style="background-color: #85E374; padding: 6px 12px; border-radius: 10px; display: inline-block; margin-bottom:5px;">{notif["message"]} <small style="color:#666;">{time_str}</small></span></div>', unsafe_allow_html=True)
+                            st.markdown(f'<div style="text-align: right;"><span style="background-color: #85E374; padding: 4px 10px; border-radius: 8px; display: inline-block; margin-bottom:4px;">{notif["message"]} <small style="color:#666;">{time_str}</small></span></div>', unsafe_allow_html=True)
                         elif notif['from_user'] == "ระบบสรุปยอด" or notif['is_auto'] == 1:
-                            st.markdown(f'<div style="text-align: left;"><span style="background-color: #D6E4FF; padding: 6px 12px; border-radius: 10px; display: inline-block; margin-bottom:5px; border-left: 4px solid #4A90E2;">🤖 บิลระบบ: {notif["message"]} <small style="color:#666;">{time_str}</small></span></div>', unsafe_allow_html=True)
+                            st.markdown(f'<div style="text-align: left;"><span style="background-color: #D6E4FF; padding: 4px 10px; border-radius: 8px; display: inline-block; margin-bottom:4px; border-left: 3px solid #4A90E2;">🤖 บิลระบบ: {notif["message"]} <small style="color:#666;">{time_str}</small></span></div>', unsafe_allow_html=True)
                         else:
-                            st.markdown(f'<div style="text-align: left;"><span style="background-color: #EAEAEA; padding: 6px 12px; border-radius: 10px; display: inline-block; margin-bottom:5px;"><b>{notif["from_user"]}</b>: {notif["message"]} <small style="color:#666;">{time_str}</small></span></div>', unsafe_allow_html=True)
+                            st.markdown(f'<div style="text-align: left;"><span style="background-color: #EAEAEA; padding: 4px 10px; border-radius: 8px; display: inline-block; margin-bottom:4px;"><b>{notif["from_user"]}</b>: {notif["message"]} <small style="color:#666;">{time_str}</small></span></div>', unsafe_allow_html=True)
                     
                     if partner != "ระบบสรุปยอด":
                         with st.form(key=f"top_reply_{partner}", clear_on_submit=True):
@@ -375,7 +423,7 @@ if st.session_state["current_online_user"] and trip_id:
 # 🛑 5. ตรวจสอบเงื่อนไขตัวแอปพลิเคชันก่อนรันต่อ
 # ==========================================
 if st.session_state["current_online_user"] is None:
-    st.info("💡 กรุณาระบุหรือเลือกข้อมูลผู้ใช้งานที่ เมนูด้านบน เพื่อเริ่มต้นระบบบันทึกบิล")
+    st.info("💡 กรุณาระบุหรือเลือกข้อมูลผู้ใช้งานที่ เมนูด้านบน เพื่อเริ่มต้นระบบ")
     st.stop()
 
 if not active_trip_display_list:
@@ -383,7 +431,7 @@ if not active_trip_display_list:
     st.stop()
 
 if not existing_members:
-    st.warning(f"⚠️ Event '{current_trip}' ยังไม่มีสมาชิกกรุณาดึงชื่อตัวคุณหรือเพื่อนเข้ากลุ่มที่เมนูด้านบนก่อน")
+    st.warning(f"⚠️ Event '{current_trip}' ยังไม่มีสมาชิก กรุณาดึงชื่อตัวคุณหรือเพื่อนเข้ากลุ่มด้านบนก่อน")
     st.stop()
 
 
@@ -391,7 +439,7 @@ if not existing_members:
 # 📝 6. พื้นที่ทำงานหลัก (MAIN WORKSPACE TABS)
 # ==========================================
 has_valid_date = current_trip_date and str(current_trip_date).strip() and not pd.isna(current_trip_date)
-st.subheader(f"🗺️ กำลังทำงานอยู่ที่ Event: {current_trip} " + (f"📅 ({current_trip_date})" if has_valid_date else ""))
+st.subheader(f"🗺️ Event ปัจจุบัน: {current_trip} " + (f"📅 ({current_trip_date})" if has_valid_date else ""))
 
 tab1, tab2, tab3 = st.tabs(["📝 สร้างบิลใหม่", "📊 ประวัติบันทึกบิล", "💰 สรุปเคลียร์เงินสมาชิก"])
 
@@ -491,11 +539,11 @@ with tab3:
                         target_data = conn.execute("SELECT * FROM all_users WHERE name = ?", (c[0],)).fetchone()
                         conn.close()
                         if target_data and (target_data['promptpay'] or target_data['bank_account']):
-                            with st.expander(f"🏦 ข้อมูลบัญชีสำหรับโอนให้ {c[0]}"):
+                            with st.expander(f"🏦 บัญชีสำหรับโอนให้ {c[0]}"):
                                 if target_data['promptpay']: st.write(f"📲 พร้อมเพย์: {target_data['promptpay']}")
                                 if target_data['bank_name']: st.write(f"🏦 ธนาคาร: {target_data['bank_name']} | 🔢 เลขบัญชี: {target_data['bank_account']}")
                         d[1] += transfer
                         c[1] -= transfer
 
 st.markdown("---")
-st.caption("Trip Expense Splitter Pro - Live Top Menu Mode Enabled")
+st.caption("Trip Expense Splitter Pro - Compact Top Menu Mode Enabled")

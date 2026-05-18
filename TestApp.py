@@ -176,7 +176,7 @@ else:
     my_data = conn.execute("SELECT * FROM all_users WHERE name = ?", (st.session_state["current_online_user"],)).fetchone()
     conn.close()
     
-    with st.sidebar.expander("⚙️ แก้ไขโปรไฟล์/ข้อมูลรับเงินส่วนตัว"):
+    with st.sidebar.expander("⚙️ Update ข้อมูลส่วนตัว"):
         edit_pp = st.text_input("เลขพร้อมเพย์:", value=my_data['promptpay'] if my_data['promptpay'] else "")
         db_bank = my_data['bank_name'] if my_data['bank_name'] else "-- เลือกธนาคาร --"
         bank_idx = BANK_LIST.index(db_bank) if db_bank in BANK_LIST else 0
@@ -367,13 +367,14 @@ conn.close()
 
 
 # 🔔 =================================================================
-# ระบบ "แชทแยกรายบุคคล (แสดงสองฝั่งโต้ตอบกัน + แจ้งเวลาส่ง + กล่องพิมพ์อยู่ล่างสุด)" 💬
+# ระบบ "แชทแยกรายบุคคลและการแจ้งเตือนอัตโนมัติ (กล่องพิมพ์อยู่ล่างสุด)" 💬
 # =================================================================
 st.sidebar.markdown("---")
 
 notif_count = 0
 if st.session_state["current_online_user"]:
     conn_count = get_db_connection()
+    # นับยอดแจ้งเตือนทั้งหมดที่ส่งหาเรา (ทั้งแชทและบิลออโต้) ที่ยังไม่อ่าน
     count_row = conn_count.execute(
         "SELECT COUNT(*) as cnt FROM notifications WHERE trip_id = ? AND to_user = ? AND is_read = 0", 
         (trip_id, st.session_state["current_online_user"])
@@ -389,20 +390,27 @@ else:
 if st.session_state["current_online_user"]:
     my_name = st.session_state["current_online_user"]
     
-    # 🔄 โหลดข้อความทั้งหมดที่เกี่ยวข้องกับตัวเรา
+    # 🔄 โดนดึง Query กลับมาให้แสดงครบทั้งคุยปกติและข้อความยิงออโต้จากระบบ
     conn_notif = get_db_connection()
     all_chat_rows = conn_notif.execute(
-        "SELECT * FROM notifications WHERE trip_id = ? AND (to_user = ? OR from_user = ?) ORDER BY timestamp ASC, id ASC", 
-        (trip_id, my_name, my_name)
+        """SELECT * FROM notifications 
+           WHERE trip_id = ? 
+           AND (to_user = ? OR from_user = ? OR (to_user = ? AND is_auto = 1)) 
+           ORDER BY timestamp ASC, id ASC""", 
+        (trip_id, my_name, my_name, my_name)
     ).fetchall()
     conn_notif.close()
     
-    # จัดกลุ่มห้องแชทแยกตามคู่สนทนา
+    # จัดกลุ่มห้องแชทแยกตามคู่สนทนาและแจ้งเตือนระบบ
     chat_groups = {}
     unread_status = {}
     
     for n in all_chat_rows:
-        partner = n['from_user'] if n['to_user'] == my_name else n['to_user']
+        if n['is_auto'] == 1 or n['from_user'] == "ระบบสรุปยอด":
+            partner = "ระบบสรุปยอด"
+        else:
+            partner = n['from_user'] if n['to_user'] == my_name else n['to_user']
+            
         if partner not in chat_groups:
             chat_groups[partner] = []
             unread_status[partner] = 0
@@ -412,9 +420,9 @@ if st.session_state["current_online_user"]:
         if n['to_user'] == my_name and n['is_read'] == 0:
             unread_status[partner] += 1
 
-    with st.sidebar.expander(f"📥 แชทแยกรายบุคคล ({len(chat_groups)})", expanded=True):
+    with st.sidebar.expander(f"📥 แชทและการแจ้งเตือน ({len(chat_groups)})", expanded=True):
         if not chat_groups:
-            st.caption("ไม่มีประวัติข้อความแชท")
+            st.caption("ไม่มีประวัติข้อความหรือการแจ้งเตือน")
         else:
             sender_keys = list(chat_groups.keys())
             tab_labels = []
@@ -430,18 +438,24 @@ if st.session_state["current_online_user"]:
             
             for idx, partner in enumerate(sender_keys):
                 with chat_tabs[idx]:
-                    # เมื่อกดเข้ามาดูห้องแชทนั้นๆ ให้เคลียร์สถานะเป็นอ่านแล้วทันที
+                    # เมื่อกดเข้ามาดูห้องนั้นๆ ให้เคลียร์สถานะเป็นอ่านแล้วทันที
                     if unread_status[partner] > 0:
                         conn_reset_person = get_db_connection()
-                        conn_reset_person.execute(
-                            "UPDATE notifications SET is_read = 1 WHERE trip_id = ? AND to_user = ? AND from_user = ? AND is_read = 0",
-                            (trip_id, my_name, partner)
-                        )
+                        if partner == "ระบบสรุปยอด":
+                            conn_reset_person.execute(
+                                "UPDATE notifications SET is_read = 1 WHERE trip_id = ? AND to_user = ? AND is_auto = 1 AND is_read = 0",
+                                (trip_id, my_name)
+                            )
+                        else:
+                            conn_reset_person.execute(
+                                "UPDATE notifications SET is_read = 1 WHERE trip_id = ? AND to_user = ? AND from_user = ? AND is_read = 0",
+                                (trip_id, my_name, partner)
+                            )
                         conn_reset_person.commit()
                         conn_reset_person.close()
                         st.rerun()
                     
-                    # 1. 💬 [ส่วนบน] แสดงข้อความแชทโต้ตอบก่อน (เก่าไปใหม่)
+                    # 1. 💬 [ส่วนบน] แสดงข้อความโต้ตอบ / แจ้งเตือนบิลระบบออโต้ก่อน (เรียงจากเก่าไปใหม่)
                     for notif in chat_groups[partner]:
                         time_str = ""
                         if notif['timestamp']:
@@ -451,7 +465,7 @@ if st.session_state["current_online_user"]:
                             except:
                                 time_str = str(notif['timestamp'])[11:16]
                         
-                        is_my_own_msg = (notif['from_user'] == my_name)
+                        is_my_own_msg = (notif['from_user'] == my_name and notif['is_auto'] == 0)
                         is_system = (notif['from_user'] == "ระบบสรุปยอด" or notif['is_auto'] == 1)
                         
                         if is_my_own_msg:
@@ -467,15 +481,15 @@ if st.session_state["current_online_user"]:
                             </div>
                             '''
                         elif is_system:
-                            # 🤖 ข้อความฝั่งขวา (ระบบอัตโนมัติ)
+                            # 🤖 ข้อความจากระบบบิลแจ้งเตือนอัตโนมัติ
                             chat_html = f'''
-                            <div style="display: flex; flex-direction: column; align-items: flex-end; margin-bottom: 10px; width: 100%;">
-                                <span style="font-size: 11px; color: #888; margin-right: 5px;">🤖 {notif['from_user']}</span>
+                            <div style="display: flex; flex-direction: column; align-items: flex-start; margin-bottom: 10px; width: 100%;">
+                                <span style="font-size: 11px; color: #4A90E2; font-weight: bold; margin-left: 5px;">🤖 ระบบอัตโนมัติ</span>
                                 <div style="display: flex; align-items: flex-end;">
-                                    <span style="font-size: 10px; color: #AAA; margin-right: 6px;">{time_str}</span>
-                                    <div style="background-color: #D6E4FF; color: #000; padding: 8px 12px; border-radius: 15px 15px 2px 15px; max-width: 220px; word-wrap: break-word; font-size: 13px; box-shadow: 1px 1px 2px rgba(0,0,0,0.1);">
+                                    <div style="background-color: #D6E4FF; color: #000; padding: 8px 12px; border-radius: 2px 15px 15px 15px; max-width: 220px; word-wrap: break-word; font-size: 13px; box-shadow: 1px 1px 2px rgba(0,0,0,0.1); border-left: 4px solid #4A90E2;">
                                         {notif['message']}
                                     </div>
+                                    <span style="font-size: 10px; color: #AAA; margin-left: 6px; padding-bottom: 2px;">{time_str}</span>
                                 </div>
                             </div>
                             '''
@@ -485,7 +499,7 @@ if st.session_state["current_online_user"]:
                             <div style="display: flex; flex-direction: column; align-items: flex-start; margin-bottom: 10px; width: 100%;">
                                 <span style="font-size: 11px; color: #888; margin-left: 5px;">👤 {notif['from_user']}</span>
                                 <div style="display: flex; align-items: flex-end;">
-                                    <div style="background-color: #EAEAEA; color: #000; padding: 8px 12px; border-radius: 15px 15px 15px 2px; max-width: 220px; word-wrap: break-word; font-size: 13px; box-shadow: 1px 1px 2px rgba(0,0,0,0.1);">
+                                    <div style="background-color: #EAEAEA; color: #000; padding: 8px 12px; border-radius: 2px 15px 15px 15px; max-width: 220px; word-wrap: break-word; font-size: 13px; box-shadow: 1px 1px 2px rgba(0,0,0,0.1);">
                                         {notif['message']}
                                     </div>
                                     <span style="font-size: 10px; color: #AAA; margin-left: 6px; padding-bottom: 2px;">{time_str}</span>
@@ -495,7 +509,7 @@ if st.session_state["current_online_user"]:
                         st.markdown(chat_html, unsafe_allow_html=True)
                         
                         # ปุ่มลบประวัติข้อความ
-                        if st.button("🗑️ ลบ", key=f"del_notif_{notif['id']}", type="secondary", help="ลบข้อความนี้ออกจากบันทึก"):
+                        if st.button("🗑️ ลบ", key=f"del_notif_{notif['id']}", type="secondary"):
                             conn_del_notif = get_db_connection()
                             conn_del_notif.execute("DELETE FROM notifications WHERE id = ?", (notif['id'],))
                             conn_del_notif.commit()
@@ -505,14 +519,14 @@ if st.session_state["current_online_user"]:
                             st.rerun()
                         st.markdown("<div style='margin-bottom: 10px; border-bottom: 1px dashed #EEE;'></div>", unsafe_allow_html=True)
 
-                    # 2. 📝 [ส่วนล่างสุด] กล่องสำหรับเขียนข้อความและปุ่มกดส่ง
+                    # 2. 📝 [ส่วนล่างสุด] กล่องสำหรับเขียนข้อความและปุ่มส่ง (ยกเว้นแท็บระบบ)
                     if partner != "ระบบสรุปยอด":
                         st.markdown("<div style='margin-top: 15px; margin-bottom: 5px; border-top: 2px solid #EEE;'></div>", unsafe_allow_html=True)
                         with st.form(key=f"reply_form_{partner}", clear_on_submit=True):
                             reply_key = f"reply_in_{partner}"
                             reply_text = st.text_input("พิมพ์ตอบกลับเพื่อนที่นี่:", placeholder=f"คุยกับ {partner}...", key=reply_key)
                             
-                            if st.form_submit_button("↩️ ส่งข้อความตอบกลับ", use_container_width=True, type="primary"):
+                            if st.form_submit_button("↩️ ตอบกลับ", use_container_width=True, type="primary"):
                                 if reply_text.strip():
                                     conn_reply = get_db_connection()
                                     conn_reply.execute(
@@ -598,10 +612,26 @@ with tab1:
             if desc and amt > 0 and split_to:
                 blob = compress_image(file)
                 conn = get_db_connection()
-                conn.execute("INSERT INTO expenses (trip_id, description, amount, payer_name, split_members, image_blob) VALUES (?,?,?,?,?,?)",
+                
+                # บันทึกข้อมูลลงตารางค่าใช้จ่ายหลัก
+                cursor = conn.cursor()
+                cursor.execute("INSERT INTO expenses (trip_id, description, amount, payer_name, split_members, image_blob) VALUES (?,?,?,?,?,?)",
                              (trip_id, desc, amt, payer, ",".join(split_to), blob))
-                conn.commit(); conn.close()
-                st.success(f"📝 บันทึกรายการบิล '{desc}' เรียบร้อยแล้ว!")
+                conn.commit()
+                
+                # 🤖 แจ้งเตือนบิลระบบอัตโนมัติ: ยิงข้อความเรียกเก็บเงินหาคนที่มีรายชื่อหารทันที
+                share_amt = amt / len(split_to)
+                for member in split_to:
+                    if member != payer: # ไม่ส่งหารตัวเอง
+                        sys_msg = f"📌 บิลใหม่เพิ่มเข้ามา: '{desc}'\n💰 ยอดรวม {amt:,.2f} บาท\n👤 คนจ่าย: {payer}\n💸 ส่วนของคุณที่ต้องรับผิดชอบหารคือกำหนด: {share_amt:,.2f} บาท"
+                        conn.execute(
+                            "INSERT INTO notifications (trip_id, to_user, from_user, message, is_auto, is_read, timestamp) VALUES (?, ?, 'ระบบสรุปยอด', ?, 1, 0, datetime('now', 'localtime'))",
+                            (trip_id, member, sys_msg)
+                        )
+                conn.commit()
+                conn.close()
+                
+                st.success(f"📝 บันทึกรายการบิล '{desc}' และส่งแจ้งเตือนออโต้เรียบร้อยแล้ว!")
                 time.sleep(1)
                 st.rerun()
             else:

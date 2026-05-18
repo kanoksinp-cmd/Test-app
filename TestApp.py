@@ -49,7 +49,7 @@ def init_db():
     # 🌐 ตารางสำหรับระบบออนไลน์ร่วมกัน
     cursor.execute('CREATE TABLE IF NOT EXISTS online_status (name TEXT PRIMARY KEY, last_seen DATETIME)')
 
-    # 🔔 ตารางสำหรับระบบข้อความแจ้งเตือนเรียกเก็บเงิน (เพิ่มคอลัมน์ is_read)
+    # 🔔 ตารางสำหรับระบบข้อความแจ้งเตือนเรียกเก็บเงิน
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS notifications (
             id INTEGER PRIMARY KEY AUTOINCREMENT, 
@@ -365,11 +365,11 @@ conn.close()
 
 
 # 🔔 =================================================================
-# 🟢 ระบบ "ข้อความแจ้งเตือนเรียกเก็บเงิน" (เพิ่มระบบออโต้รีเซ็ตเมื่อเปิดอ่าน)
+# 🟢 ระบบ "แยกแชทรายบุคคล" และรีเซ็ตอัตโนมัติเมื่อเปิดอ่านแยกกล่อง
 # =================================================================
 st.sidebar.markdown("---")
 
-# ดึงจำนวนข้อความที่ยังไม่อ่าน (is_read = 0) เพื่อสร้าง Badge แจ้งเตือนสีแดง (🔴) บนหัวข้อ
+# ดึงจำนวนข้อความรวมที่ยังไม่อ่าน (is_read = 0) ทั้งหมดของเรามาแสดงตรงหัวข้อหลัก
 notif_count = 0
 if st.session_state["current_online_user"]:
     conn_count = get_db_connection()
@@ -381,14 +381,14 @@ if st.session_state["current_online_user"]:
     conn_count.close()
 
 if notif_count > 0:
-    st.sidebar.markdown(f"<h3>🔔 ข้อความแจ้งเตือน <span style='color:#FF4B4B; font-size:18px;'>🔴 ({notif_count})</span></h3>", unsafe_allow_html=True)
+    st.sidebar.markdown(f"<h3>🔔 ศูนย์แชทและแจ้งเตือน <span style='color:#FF4B4B; font-size:18px;'>🔴 ({notif_count})</span></h3>", unsafe_allow_html=True)
 else:
-    st.sidebar.header("🔔 ข้อความแจ้งเตือน")
+    st.sidebar.header("🔔 ศูนย์แชทและแจ้งเตือน")
 
 if st.session_state["current_online_user"]:
     my_name = st.session_state["current_online_user"]
     
-    # ดึงข้อความแจ้งเตือนทั้งหมดที่มีคนส่งถึงโปรไฟล์เราภายใน Event นี้
+    # 1. ดึงข้อความทั้งหมดที่มีส่งถึงเรา เพื่อนำมาคัดแยกผู้ส่ง
     conn_notif = get_db_connection()
     my_notifs = conn_notif.execute(
         "SELECT * FROM notifications WHERE trip_id = ? AND to_user = ? ORDER BY id DESC", 
@@ -396,63 +396,85 @@ if st.session_state["current_online_user"]:
     ).fetchall()
     conn_notif.close()
     
-    # 📑 กล่องรับข้อความแจ้งเตือนที่ส่งถึงเรา
-    box_label = f"📥 กล่องข้อความของคุณ ({len(my_notifs)})"
+    # จัดหมวดกลุ่มแชทแยกตามรายชื่อคนส่ง (รวมถึง "ระบบสรุปยอด" ด้วย)
+    chat_groups = {}
+    unread_status = {} # บันทึกว่าแต่ละคนมีข้อความที่ยังไม่อ่านกี่ข้อความ
     
-    # สร้าง Expander แบบตรวจจับสเตตัสการคลิกเปิดอ่าน
-    messages_box = st.sidebar.expander(box_label, expanded=False)
-    
-    with messages_box:
-        # ⚡ 🟢 หัวใจหลัก: ถ้าผู้ใช้กางเปิดอ่านกล่องข้อความนี้ ให้รันคำสั่งรีเซ็ตไฟแจ้งเตือนทันที!
-        if notif_count > 0:
-            conn_reset = get_db_connection()
-            conn_reset.execute(
-                "UPDATE notifications SET is_read = 1 WHERE trip_id = ? AND to_user = ? AND is_read = 0",
-                (trip_id, my_name)
-            )
-            conn_reset.commit()
-            conn_reset.close()
-            st.rerun() # รีสคริปต์หน้าจอเพื่อให้ตัวนับเลขเมนูสีแดงอัปเดตหายไปทันตาเห็น
-            
-        if not my_notifs:
-            st.caption("ไม่มีข้อความเรียกเก็บเงินใหม่")
+    for n in my_notifs:
+        sender = n['from_user']
+        if sender not in chat_groups:
+            chat_groups[sender] = []
+            unread_status[sender] = 0
+        chat_groups[sender].append(n)
+        if n['is_read'] == 0:
+            unread_status[sender] += 1
+
+    # 📑 สร้าง Expander หลักของกล่องข้อความ
+    with st.sidebar.expander(f"📥 เปิดกล่องข้อความแยกบุคคล ({len(my_notifs)})", expanded=True):
+        if not chat_groups:
+            st.caption("ไม่มีประวัติข้อความเรียกเก็บเงิน")
         else:
-            for notif in my_notifs:
-                is_system_or_me = notif['from_user'] in ["ระบบสรุปยอด", my_name] or notif['is_auto'] == 1
-                
-                if is_system_or_me:
-                    # 🟢 แชทฝั่งขวา (สีเขียวสไตล์ LINE)
-                    chat_html = f'''
-                    <div style="display: flex; flex-direction: column; align-items: flex-end; margin-bottom: 10px; width: 100%;">
-                        <span style="font-size: 11px; color: #888; margin-right: 5px;">{notif['from_user']}</span>
-                        <div style="background-color: #85E374; color: #000; padding: 8px 12px; border-radius: 15px 15px 2px 15px; max-width: 85%; word-wrap: break-word; font-size: 13px; box-shadow: 1px 1px 2px rgba(0,0,0,0.1);">
-                            {notif['message']}
-                        </div>
-                    </div>
-                    '''
+            # 🛠️ ใช้ st.tabs เพื่อทำการแยกหน้าแชทของแต่ละคนออกจากกันเด็ดขาด
+            tab_labels = []
+            sender_keys = list(chat_groups.keys())
+            
+            for sender in sender_keys:
+                badge = f" (🔴 {unread_status[sender]})" if unread_status[sender] > 0 else ""
+                if sender == "ระบบสรุปยอด":
+                    tab_labels.append(f"🤖 ระบบ{badge}")
                 else:
-                    # ⚪ แชทฝั่งซ้าย (สีเทา/ขาว สไตล์เพื่อนส่งมา)
-                    chat_html = f'''
-                    <div style="display: flex; flex-direction: column; align-items: flex-start; margin-bottom: 10px; width: 100%;">
-                        <span style="font-size: 11px; color: #888; margin-left: 5px;">{notif['from_user']}</span>
-                        <div style="background-color: #EAEAEA; color: #000; padding: 8px 12px; border-radius: 15px 15px 15px 2px; max-width: 85%; word-wrap: break-word; font-size: 13px; box-shadow: 1px 1px 2px rgba(0,0,0,0.1);">
-                            {notif['message']}
-                        </div>
-                    </div>
-                    '''
-                
-                st.markdown(chat_html, unsafe_allow_html=True)
-                
-                # ปุ่มกดลบซ่อนอยู่ใต้ข้อความแชทนั้นๆ (ใช้สำหรับเคลียร์ลบกล่องประวัติ)
-                if st.button("🗑️ ลบประวัติข้อความนี้", key=f"del_notif_{notif['id']}", type="secondary", use_container_width=True):
-                    conn_del_notif = get_db_connection()
-                    conn_del_notif.execute("DELETE FROM notifications WHERE id = ?", (notif['id'],))
-                    conn_del_notif.commit()
-                    conn_del_notif.close()
-                    st.toast("ลบประวัติข้อความเรียบร้อย")
-                    time.sleep(0.3)
-                    st.rerun()
-                st.markdown("<div style='margin-bottom: 15px; border-bottom: 1px dashed #DDD;'></div>", unsafe_allow_html=True)
+                    tab_labels.append(f"👤 {sender}{badge}")
+            
+            # รัน Tabs แชทแยกบุคคล
+            chat_tabs = st.tabs(tab_labels)
+            
+            for idx, sender in enumerate(sender_keys):
+                with chat_tabs[idx]:
+                    # ⚡ 🟢 ตรวจจับสเตตัสเปิดแชทของคนนี้: ถ้าแท็บของคนนั้นมีของที่ยังไม่อ่าน ให้รีเซ็ตเฉพาะของคนนั้นๆ ทันที!
+                    if unread_status[sender] > 0:
+                        conn_reset_person = get_db_connection()
+                        conn_reset_person.execute(
+                            "UPDATE notifications SET is_read = 1 WHERE trip_id = ? AND to_user = ? AND from_user = ? AND is_read = 0",
+                            (trip_id, my_name, sender)
+                        )
+                        conn_reset_person.commit()
+                        conn_reset_person.close()
+                        st.rerun() # รีหน้าจอทันทีเพื่ออัปเดตล้างตัวเลขสถิติของแชทคนนี้โดยไม่กวนแชทคนอื่น
+                    
+                    # วนลูปแสดงผลข้อความแชทเฉพาะของบุคคลนั้นๆ
+                    for notif in chat_groups[sender]:
+                        is_system_or_me = notif['from_user'] in ["ระบบสรุปยอด", my_name] or notif['is_auto'] == 1
+                        
+                        if is_system_or_me:
+                            chat_html = f'''
+                            <div style="display: flex; flex-direction: column; align-items: flex-end; margin-bottom: 10px; width: 100%;">
+                                <span style="font-size: 11px; color: #888; margin-right: 5px;">{notif['from_user']}</span>
+                                <div style="background-color: #85E374; color: #000; padding: 8px 12px; border-radius: 15px 15px 2px 15px; max-width: 85%; word-wrap: break-word; font-size: 13px; box-shadow: 1px 1px 2px rgba(0,0,0,0.1);">
+                                    {notif['message']}
+                                </div>
+                            </div>
+                            '''
+                        else:
+                            chat_html = f'''
+                            <div style="display: flex; flex-direction: column; align-items: flex-start; margin-bottom: 10px; width: 100%;">
+                                <span style="font-size: 11px; color: #888; margin-left: 5px;">{notif['from_user']}</span>
+                                <div style="background-color: #EAEAEA; color: #000; padding: 8px 12px; border-radius: 15px 15px 15px 2px; max-width: 85%; word-wrap: break-word; font-size: 13px; box-shadow: 1px 1px 2px rgba(0,0,0,0.1);">
+                                    {notif['message']}
+                                </div>
+                            </div>
+                            '''
+                        st.markdown(chat_html, unsafe_allow_html=True)
+                        
+                        # ปุ่มลบประวัติของข้อความนั้น ๆ
+                        if st.button("🗑️ ลบประวัติข้อความนี้", key=f"del_notif_{notif['id']}", type="secondary", use_container_width=True):
+                            conn_del_notif = get_db_connection()
+                            conn_del_notif.execute("DELETE FROM notifications WHERE id = ?", (notif['id'],))
+                            conn_del_notif.commit()
+                            conn_del_notif.close()
+                            st.toast("ลบประวัติข้อความเรียบร้อย")
+                            time.sleep(0.3)
+                            st.rerun()
+                        st.markdown("<div style='margin-bottom: 10px; border-bottom: 1px dashed #DDD;'></div>", unsafe_allow_html=True)
 
     # ฟอร์มเขียนข้อความเพื่อส่งหาเพื่อนในกลุ่ม
     with st.sidebar.expander("📝 ส่งข้อความเรียกเก็บเงิน"):

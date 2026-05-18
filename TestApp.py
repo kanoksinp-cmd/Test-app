@@ -371,7 +371,8 @@ if st.session_state["current_online_user"]:
     conn_count.close()
 
 if notif_count > 0:
-    st.sidebar.header(f"🔔 ข้อความแจ้งเตือน <span style='color:#FF4B4B; font-size:18px;'>🔴 ({notif_count})</span>", unsafe_allow_html=True)
+    # 🛠️ เปลี่ยนมาใช้ st.sidebar.markdown เพื่อแก้ไขปัญหา TypeError จาก unsafe_allow_html
+    st.sidebar.markdown(f"<h3>🔔 ข้อความแจ้งเตือน <span style='color:#FF4B4B; font-size:18px;'>🔴 ({notif_count})</span></h3>", unsafe_allow_html=True)
 else:
     st.sidebar.header("🔔 ข้อความแจ้งเตือน")
 

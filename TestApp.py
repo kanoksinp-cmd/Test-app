@@ -365,7 +365,7 @@ conn.close()
 
 
 # 🔔 =================================================================
-# ระบบ "แยกแชทรายบุคคล + พิมพ์ตอบกลับในกล่อง" 💬
+# ระบบ "แยกแชทรายบุคคล + รีเซ็ตกล่องพิมพ์เคลียร์ค่าเป็นว่างหลังส่ง" 💬
 # =================================================================
 st.sidebar.markdown("---")
 
@@ -436,8 +436,18 @@ if st.session_state["current_online_user"]:
                     
                     # 🟢 ส่วนการพิมพ์ตอบกลับในกล่องแชทของคนนั้นๆ โดยตรง
                     if sender != "ระบบสรุปยอด":
+                        # สร้างตัวแปร key ใน session_state สำหรับกล่องแชทของเพื่อนแต่ละคนถ้ายังไม่มี
+                        reply_input_key = f"reply_val_{sender}"
+                        if reply_input_key not in st.session_state:
+                            st.session_state[reply_input_key] = ""
+
                         with st.form(key=f"reply_form_{sender}"):
-                            reply_text = st.text_input("พิมพ์ตอบกลับเพื่อนที่นี่:", placeholder=f"คุยกับ {sender}...", key=f"reply_in_{sender}")
+                            reply_text = st.text_input(
+                                "พิมพ์ตอบกลับเพื่อนที่นี่:", 
+                                placeholder=f"คุยกับ {sender}...", 
+                                value=st.session_state[reply_input_key],
+                                key=f"reply_in_{sender}"
+                            )
                             if st.form_submit_button("↩️ ส่งข้อความตอบกลับ", use_container_width=True, type="primary"):
                                 if reply_text.strip():
                                     conn_reply = get_db_connection()
@@ -447,6 +457,10 @@ if st.session_state["current_online_user"]:
                                     )
                                     conn_reply.commit()
                                     conn_reply.close()
+                                    
+                                    # 💥 ทำการ RESET ล้างค่าในกล่องพิมพ์แชทของคนนี้ให้เป็นค่าว่างทันที!
+                                    st.session_state[reply_input_key] = ""
+                                    
                                     st.toast(f"🚀 ส่งคำตอบกลับหา {sender} แล้ว!")
                                     time.sleep(0.3)
                                     st.rerun()

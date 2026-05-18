@@ -355,7 +355,7 @@ conn.close()
 
 
 # 🔔 =================================================================
-# 🟢 เพิ่มส่วนระบบ "ข้อความแจ้งเตือนเรียกเก็บเงิน" ไว้ใน Sidebar
+# 🟢 ระบบ "ข้อความแจ้งเตือนเรียกเก็บเงิน" (แชท LINE ซ้าย-ขวา + เคลียร์อัตโนมัติเมื่อเปิดดู)
 # =================================================================
 st.sidebar.markdown("---")
 
@@ -378,7 +378,7 @@ else:
 if st.session_state["current_online_user"]:
     my_name = st.session_state["current_online_user"]
     
-    # ดึงข้อความแจ้งเตือนที่มีคนส่งถึงโปรไฟล์เราภายใน Event นี้
+    # ดึงข้อความแจ้งเตือนที่มีคนส่งถึงโปรไฟล์เราภายใน Event นี้ออกมารอแสดงผลก่อน
     conn_notif = get_db_connection()
     my_notifs = conn_notif.execute(
         "SELECT * FROM notifications WHERE trip_id = ? AND to_user = ? ORDER BY id DESC", 
@@ -386,13 +386,26 @@ if st.session_state["current_online_user"]:
     ).fetchall()
     conn_notif.close()
     
-    # กล่องรับข้อความแจ้งเตือนที่ส่งถึงเรา (ตกแต่งแบบแชท LINE ซ้าย-ขวา)
-    with st.sidebar.expander(f"📥 กล่องข้อความของคุณ ({len(my_notifs)})", expanded=True):
+    # ใช้ Checkbox ตกแต่งเป็นปุ่มเปิด/ปิดกล่องข้อความ เพื่อดักจับ Event ตอนกดเปิดดู
+    show_inbox = st.sidebar.checkbox(f"📥 เปิดกล่องข้อความของคุณ ({len(my_notifs)})", value=False, key="open_inbox_trigger")
+    
+    if show_inbox:
+        # ⚡ ถ้าผู้ใช้งานเปิดกล่องข้อความ และมียอดแจ้งเตือนตกค้าง ให้ลบออกจากฐานข้อมูลทันที
+        if notif_count > 0:
+            conn_clear = get_db_connection()
+            conn_clear.execute("DELETE FROM notifications WHERE trip_id = ? AND to_user = ?", (trip_id, my_name))
+            conn_clear.commit()
+            conn_clear.close()
+            # แจ้งเตือนผู้ใช้ว่าเคลียร์เรียบร้อยแล้ว
+            st.toast("📥 เปิดอ่านแล้ว - ล้างรายการแจ้งเตือนตกค้างเรียบร้อย")
+            time.sleep(0.5)
+            st.rerun()
+
+        # แสดงผลข้อความแชทซ้าย-ขวา (LINE Style) ให้ผู้ใช้เห็นในขณะที่เปิดหน้าต่างนี้อยู่
         if not my_notifs:
-            st.caption("ไม่มีข้อความเรียกเก็บเงินใหม่")
+            st.caption("ไม่มีข้อความแจ้งเตือนตกค้าง")
         else:
             for notif in my_notifs:
-                # 💬 เช็คประเภทข้อความ: ถ้ามาจากบิลอัตโนมัติ/หรือตัวเราส่งหาตัวเอง ให้ชิดขวา (สไตล์เราส่ง) นอกนั้นชิดซ้าย (สไตล์คนอื่นส่งมา)
                 is_system_or_me = notif['from_user'] in ["ระบบสรุปยอด", my_name]
                 
                 if is_system_or_me:
@@ -415,20 +428,10 @@ if st.session_state["current_online_user"]:
                         </div>
                     </div>
                     '''
-                
-                # แสดงผลกล่องข้อความแชท
                 st.markdown(chat_html, unsafe_allow_html=True)
-                
-                # ปุ่มกดลบซ่อนอยู่ใต้ข้อความแชทนั้นๆ
-                if st.button("🗑️ อ่านแล้วลบ", key=f"del_notif_{notif['id']}", type="secondary", use_container_width=True):
-                    conn_del_notif = get_db_connection()
-                    conn_del_notif.execute("DELETE FROM notifications WHERE id = ?", (notif['id'],))
-                    conn_del_notif.commit()
-                    conn_del_notif.close()
-                    st.toast("ลบข้อความแจ้งเตือนเรียบร้อย")
-                    time.sleep(0.3)
-                    st.rerun()
-                st.markdown("<div style='margin-bottom: 15px; border-bottom: 1px dashed #DDD;'></div>", unsafe_allow_html=True)
+            
+            st.caption("💡 ข้อความเหล่านี้ถูกอ่านและเคลียร์ออกจากระบบเรียบร้อยแล้วเมื่อคุณเปิดกล่องนี้")
+            st.markdown("<div style='margin-bottom: 15px; border-bottom: 1px dashed #DDD;'></div>", unsafe_allow_html=True)
 
     # ฟอร์มเขียนข้อความเพื่อส่งหาเพื่อนในกลุ่ม
     with st.sidebar.expander("📝 ส่งข้อความเรียกเก็บเงิน"):
@@ -624,22 +627,20 @@ with tab3:
             if abs(creditors[0][1]) < 0.01: creditors.pop(0)
 
         # ====================================================================
-        # 🔔 🟢 ระบบส่งยอดเข้ากล่องข้อความออโตเมติก เมื่อมีการเปิดดูหน้าสรุปเคลียร์เงิน
+        # 🔔 ระบบส่งยอดเข้ากล่องข้อความออโตเมติก เมื่อมีการเปิดดูหน้าสรุปเคลียร์เงิน
         # ====================================================================
         current_viewer = st.session_state["current_online_user"]
         conn_auto_notif = get_db_connection()
         
         for d_n, c_n, a_m in final_tx:
-            # รูปแบบข้อความสั้นกระชับเข้าใจง่าย
             auto_msg = f"🔔 ยอดสรุปทริป {current_trip}: คุณมีค้างโอนให้ [{c_n}] จำนวน {a_m:,.2f} บาท รบกวนตรวจสอบในแท็บสรุปเงินด้วยน้า 🙏"
             
-            # เช็คก่อนว่าเคยส่งข้อความตัวนี้เป๊ะๆ ไปหาลูกหนี้คนนี้แล้วหรือยัง (ป้องกันระบบยิงข้อความซ้ำจากการ Autorefresh ทุก 1 วินาที)
+            # เช็คก่อนว่าเคยส่งข้อความตัวนี้ไปหาลูกหนี้คนนี้แล้วหรือยัง (ป้องกันระบบยิงข้อความซ้ำจาก Autorefresh)
             already_sent = conn_auto_notif.execute(
                 "SELECT id FROM notifications WHERE trip_id = ? AND to_user = ? AND message = ?",
                 (trip_id, d_n, auto_msg)
             ).fetchone()
             
-            # ถ้ายังไม่มีข้อความนี้ ให้เขียนบันทึกลงตารางทันที
             if not already_sent:
                 conn_auto_notif.execute(
                     "INSERT INTO notifications (trip_id, to_user, from_user, message) VALUES (?, ?, ?, ?)",

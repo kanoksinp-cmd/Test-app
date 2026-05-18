@@ -365,11 +365,10 @@ conn.close()
 
 
 # 🔔 =================================================================
-# 🟢 ระบบ "แยกแชทรายบุคคล" และรีเซ็ตอัตโนมัติเมื่อเปิดอ่านแยกกล่อง
+# ระบบ "แยกแชทรายบุคคล" เปิดกล่องข้อความพิมพ์คุยแยกเป็นสัดส่วน
 # =================================================================
 st.sidebar.markdown("---")
 
-# ดึงจำนวนข้อความรวมที่ยังไม่อ่าน (is_read = 0) ทั้งหมดของเรามาแสดงตรงหัวข้อหลัก
 notif_count = 0
 if st.session_state["current_online_user"]:
     conn_count = get_db_connection()
@@ -381,14 +380,13 @@ if st.session_state["current_online_user"]:
     conn_count.close()
 
 if notif_count > 0:
-    st.sidebar.markdown(f"<h3>🔔 ศูนย์แชทและแจ้งเตือน <span style='color:#FF4B4B; font-size:18px;'>🔴 ({notif_count})</span></h3>", unsafe_allow_html=True)
+    st.sidebar.markdown(f"<h3>🔔 ศูนย์แชทส่วนตัว <span style='color:#FF4B4B; font-size:18px;'>🔴 ({notif_count})</span></h3>", unsafe_allow_html=True)
 else:
-    st.sidebar.header("🔔 ศูนย์แชทและแจ้งเตือน")
+    st.sidebar.header("🔔 ศูนย์แชทส่วนตัว")
 
 if st.session_state["current_online_user"]:
     my_name = st.session_state["current_online_user"]
     
-    # 1. ดึงข้อความทั้งหมดที่มีส่งถึงเรา เพื่อนำมาคัดแยกผู้ส่ง
     conn_notif = get_db_connection()
     my_notifs = conn_notif.execute(
         "SELECT * FROM notifications WHERE trip_id = ? AND to_user = ? ORDER BY id DESC", 
@@ -396,9 +394,8 @@ if st.session_state["current_online_user"]:
     ).fetchall()
     conn_notif.close()
     
-    # จัดหมวดกลุ่มแชทแยกตามรายชื่อคนส่ง (รวมถึง "ระบบสรุปยอด" ด้วย)
     chat_groups = {}
-    unread_status = {} # บันทึกว่าแต่ละคนมีข้อความที่ยังไม่อ่านกี่ข้อความ
+    unread_status = {}
     
     for n in my_notifs:
         sender = n['from_user']
@@ -409,12 +406,10 @@ if st.session_state["current_online_user"]:
         if n['is_read'] == 0:
             unread_status[sender] += 1
 
-    # 📑 สร้าง Expander หลักของกล่องข้อความ
-    with st.sidebar.expander(f"📥 เปิดกล่องข้อความแยกบุคคล ({len(my_notifs)})", expanded=True):
+    with st.sidebar.expander(f"📥 แชทแยกรายบุคคล ({len(my_notifs)})", expanded=True):
         if not chat_groups:
-            st.caption("ไม่มีประวัติข้อความเรียกเก็บเงิน")
+            st.caption("ไม่มีประวัติข้อความแชท")
         else:
-            # 🛠️ ใช้ st.tabs เพื่อทำการแยกหน้าแชทของแต่ละคนออกจากกันเด็ดขาด
             tab_labels = []
             sender_keys = list(chat_groups.keys())
             
@@ -425,12 +420,10 @@ if st.session_state["current_online_user"]:
                 else:
                     tab_labels.append(f"👤 {sender}{badge}")
             
-            # รัน Tabs แชทแยกบุคคล
             chat_tabs = st.tabs(tab_labels)
             
             for idx, sender in enumerate(sender_keys):
                 with chat_tabs[idx]:
-                    # ⚡ 🟢 ตรวจจับสเตตัสเปิดแชทของคนนี้: ถ้าแท็บของคนนั้นมีของที่ยังไม่อ่าน ให้รีเซ็ตเฉพาะของคนนั้นๆ ทันที!
                     if unread_status[sender] > 0:
                         conn_reset_person = get_db_connection()
                         conn_reset_person.execute(
@@ -439,9 +432,8 @@ if st.session_state["current_online_user"]:
                         )
                         conn_reset_person.commit()
                         conn_reset_person.close()
-                        st.rerun() # รีหน้าจอทันทีเพื่ออัปเดตล้างตัวเลขสถิติของแชทคนนี้โดยไม่กวนแชทคนอื่น
+                        st.rerun()
                     
-                    # วนลูปแสดงผลข้อความแชทเฉพาะของบุคคลนั้นๆ
                     for notif in chat_groups[sender]:
                         is_system_or_me = notif['from_user'] in ["ระบบสรุปยอด", my_name] or notif['is_auto'] == 1
                         
@@ -465,8 +457,7 @@ if st.session_state["current_online_user"]:
                             '''
                         st.markdown(chat_html, unsafe_allow_html=True)
                         
-                        # ปุ่มลบประวัติของข้อความนั้น ๆ
-                        if st.button("🗑️ ลบประวัติข้อความนี้", key=f"del_notif_{notif['id']}", type="secondary", use_container_width=True):
+                        if st.button("🗑️ ลบข้อความนี้", key=f"del_notif_{notif['id']}", type="secondary", use_container_width=True):
                             conn_del_notif = get_db_connection()
                             conn_del_notif.execute("DELETE FROM notifications WHERE id = ?", (notif['id'],))
                             conn_del_notif.commit()
@@ -476,14 +467,13 @@ if st.session_state["current_online_user"]:
                             st.rerun()
                         st.markdown("<div style='margin-bottom: 10px; border-bottom: 1px dashed #DDD;'></div>", unsafe_allow_html=True)
 
-    # ฟอร์มเขียนข้อความเพื่อส่งหาเพื่อนในกลุ่ม
-    with st.sidebar.expander("📝 ส่งข้อความเรียกเก็บเงิน"):
+    with st.sidebar.expander("📝 พิมพ์ส่งข้อความหาเพื่อน"):
         other_members = [m for m in existing_members if m != my_name]
         if not other_members:
             st.caption("ไม่มีสมาชิกคนอื่นในกลุ่มนี้ที่จะส่งหา")
         else:
             send_to = st.selectbox("ส่งถึงใคร:", other_members, key="notif_send_to")
-            notif_msg = st.text_area("ข้อความเรียกเก็บเงิน:", placeholder="เช่น: ค่าบุฟเฟต์สุกี้เมื่อกี้คนละ 320 บาทน้า...", key="notif_msg_text")
+            notif_msg = st.text_area("ข้อความ:", placeholder="พิมพ์แชทคุยกันที่นี่...", key="notif_msg_text")
             
             if st.button("🚀 ส่งข้อความ", type="primary", use_container_width=True):
                 if notif_msg.strip():
@@ -494,13 +484,13 @@ if st.session_state["current_online_user"]:
                     )
                     conn_send_notif.commit()
                     conn_send_notif.close()
-                    st.toast(f"🚀 ส่งข้อความเรียกเก็บเงินถึง {send_to} แล้ว!")
+                    st.toast(f"🚀 ส่งข้อความถึง {send_to} แล้ว!")
                     time.sleep(0.5)
                     st.rerun()
                 else:
                     st.error("⚠️ กรุณากรอกข้อความก่อนส่ง")
 else:
-    st.sidebar.caption("กรุณาเข้าสู่ระบบเพื่อใช้งานระบบแจ้งเตือน")
+    st.sidebar.caption("กรุณาเข้าสู่ระบบเพื่อใช้งานระบบแชท")
 # ====================================================================
 
 
@@ -523,7 +513,6 @@ st.title(f"✈️ ข้อมูล Event: {current_trip}")
 if has_valid_date:
     st.subheader(f"📅 วันที่จัด: {current_trip_date}")
 
-# แบ่งฟังก์ชันออกเป็น 3 แท็บหลัก
 tab1, tab2, tab3 = st.tabs(["📝 สร้างบิลใหม่", "📊 ประวัติบันทึกบิล", "💰 สรุปเคลียร์เงินสมาชิก"])
 
 with tab1:
@@ -669,30 +658,8 @@ with tab3:
             if abs(debtors[0][1]) < 0.01: debtors.pop(0)
             if abs(creditors[0][1]) < 0.01: creditors.pop(0)
 
-        # ====================================================================
-        # 🔔 🟢 ระบบส่งยอดเข้ากล่องข้อความออโตเมติก
-        # ====================================================================
-        current_viewer = st.session_state["current_online_user"]
-        bill_fingerprint = f"bill_sync_{'-'.join([str(r['id']) for r in expenses_rows])}"
-        
-        if st.session_state.get("last_notified_fingerprint") != bill_fingerprint:
-            conn_auto_notif = get_db_connection()
-            for d_n, c_n, a_m in final_tx:
-                auto_msg = f"🔔 ยอดสรุปทริป {current_trip}: คุณมีค้างโอนให้ [{c_n}] จำนวน {a_m:,.2f} บาท รบกวนตรวจสอบในแท็บสรุปเงินด้วยน้า 🙏"
-                
-                already_sent = conn_auto_notif.execute(
-                    "SELECT id FROM notifications WHERE trip_id = ? AND to_user = ? AND message = ? AND is_auto = 1",
-                    (trip_id, d_n, auto_msg)
-                ).fetchone()
-                
-                if not already_sent:
-                    conn_auto_notif.execute(
-                        "INSERT INTO notifications (trip_id, to_user, from_user, message, is_auto, is_read) VALUES (?, ?, ?, ?, 1, 0)",
-                        (trip_id, d_n, "ระบบสรุปยอด", auto_msg)
-                    )
-            conn_auto_notif.commit()
-            conn_auto_notif.close()
-            st.session_state["last_notified_fingerprint"] = bill_fingerprint
+        # 🛑 นำโค้ดลูปตรวจจับสลักพิมพ์นิ้วมือและการส่งข้อความเรียกเก็บเงิน "ระบบสรุปยอด" อัตโนมัติออกเรียบร้อยแล้ว
+        # สมาชิกสามารถอ่านแผนการเงินได้จากแท็บหน้านี้ หรือกดแชร์เข้า LINE แทน เพื่อไม่ให้แชทส่วนตัวแจ้งเตือนซ้ำซ้อน
 
         # ================= ส่วนระบบส่งข้อมูลเข้า LINE =================
         st.subheader("📲 ส่งสรุปยอดเข้า LINE")

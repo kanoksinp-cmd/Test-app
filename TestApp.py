@@ -111,7 +111,7 @@ conn = get_db_connection()
 existing_all_users = [row["name"] for row in conn.execute("SELECT name FROM all_users").fetchall()]
 conn.close()
 
-# ตรวจสอบสถานะการล็อกอินโปรไฟล์ของแท็บเบราว์เซอร์นี้
+# ตรวจสอบสถานะการล็อกอินโปรไฟล์ของแท็บเบราว์เซอร์นี้ (บนสุดของ Sidebar)
 if st.session_state["current_online_user"] is None:
     st.sidebar.warning("⚠️ เครื่องนี้ยังไม่ได้ล็อกอินโปรไฟล์")
     login_mode = st.sidebar.radio("ทางเลือกบัญชี:", ["เลือกโปรไฟล์ที่มีอยู่", "สร้างโปรไฟล์ใหม่"], horizontal=True)
@@ -456,7 +456,21 @@ with tab3:
         if my_name in net:
             my_balance = net[my_name]
             if my_balance < -0.01:
+                # 🛠️ เพิ่มปุ่ม "ยืนยันการชำระแล้ว" ในกล่อง Error ของตัวผู้ใช้เอง
                 st.error(f"🔴 **⚠️ คุณมียอดค้างชำระ:** สวัสดีคุณ **{my_name}** บิลทริปนี้คุณมียอดที่ **ต้องจ่ายออก** ทั้งหมด **{abs(my_balance):,.2f}** บาท กรุณาเคลียร์เงินให้เพื่อนด้วยน้าา")
+                
+                # โค้ดปุ่มยืนยันการชำระเงินของ Debtor เครื่องนั้นๆ เพื่อหักลบยอดชั่วคราว
+                if st.button("✅ ฉันโอนเงินเคลียร์ยอดเรียบร้อยแล้ว", key="confirm_paid_btn", type="primary"):
+                    conn = get_db_connection()
+                    # แทรกประวัติการเคลียร์ส่วนตัวเข้าไปเพื่อทำระบบลบยอดค้างชำระ
+                    # โดยจำลองการสร้างบิลติดลบคืนให้ระบบ หรือ บันทึก Settlement รายบุคคล
+                    conn.execute("INSERT INTO expenses (trip_id, description, amount, payer_name, split_members) VALUES (?,?,?,?,?)",
+                                 (trip_id, f"💸 {my_name} จ่ายยอดค้างชำระคืนระบบ", abs(my_balance), my_name, ",".join(existing_members)))
+                    conn.commit(); conn.close()
+                    st.toast("🎉 บันทึกการจ่ายเงินของคุณเรียบร้อยแล้ว ยอดเงินจะอัปเดตทันที!")
+                    time.sleep(1)
+                    st.rerun()
+                    
             elif my_balance > 0.01:
                 st.success(f"🟢 **💰 ยอดรอรับคืน:** ยินดีด้วยคุณ **{my_name}** คุณสำรองจ่ายไปเยอะ ทริปนี้คุณมียอดที่ **จะได้คืน** ทั้งหมด **{my_balance:,.2f}** บาท")
             else:

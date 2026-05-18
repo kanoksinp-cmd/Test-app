@@ -5,7 +5,7 @@ import io
 from PIL import Image
 import time
 import urllib.parse
-from datetime import datetime, timedelta
+from datetime import datetime
 # 🔄 นำเข้าคอมโพเนนต์สำหรับดึงสัญญาณรีเฟรชอัตโนมัติ
 from streamlit_autorefresh import st_autorefresh
 
@@ -49,7 +49,7 @@ def init_db():
     # 🌐 ตารางสำหรับระบบออนไลน์ร่วมกัน
     cursor.execute('CREATE TABLE IF NOT EXISTS online_status (name TEXT PRIMARY KEY, last_seen DATETIME)')
 
-    # 🔔 ตารางสำหรับระบบข้อความแจ้งเตือนเรียกเก็บเงิน
+    # 🔔 ตารางสำหรับระบบข้อความแจ้งเตือนเรียกเก็บเงิน (เพิ่มคอลัมน์ is_read)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS notifications (
             id INTEGER PRIMARY KEY AUTOINCREMENT, 
@@ -58,6 +58,8 @@ def init_db():
             from_user TEXT, 
             message TEXT, 
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            is_auto INTEGER DEFAULT 0,
+            is_read INTEGER DEFAULT 0,
             FOREIGN KEY(trip_id) REFERENCES trips(id)
         )
     ''')
@@ -77,6 +79,14 @@ def init_db():
     trip_columns = [row[1] for row in cursor.fetchall()]
     if 'trip_date' not in trip_columns:
         cursor.execute("ALTER TABLE trips ADD COLUMN trip_date TEXT")
+
+    # ตรวจสอบความปลอดภัยคอลัมน์ตารางแจ้งเตือนเก่า
+    cursor.execute("PRAGMA table_info(notifications)")
+    notif_columns = [row[1] for row in cursor.fetchall()]
+    if 'is_auto' not in notif_columns:
+        cursor.execute("ALTER TABLE notifications ADD COLUMN is_auto INTEGER DEFAULT 0")
+    if 'is_read' not in notif_columns:
+        cursor.execute("ALTER TABLE notifications ADD COLUMN is_read INTEGER DEFAULT 0")
         
     conn.commit()
     conn.close()
@@ -323,9 +333,9 @@ if existing_members:
         m_col1, m_col2 = st.sidebar.columns([4, 1])
         is_me = f" (คุณ)" if member == st.session_state["current_online_user"] else ""
         
-        # 📨 เช็คจำนวนข้อความตกค้างของสมาชิกแต่ละคนใน Event นี้
+        # 📨 เช็คจำนวนข้อความตกค้างที่ 'ยังไม่ได้อ่าน (is_read = 0)' ของสมาชิกแต่ละคน
         mem_notif_row = conn_member_notif.execute(
-            "SELECT COUNT(*) as cnt FROM notifications WHERE trip_id = ? AND to_user = ?", 
+            "SELECT COUNT(*) as cnt FROM notifications WHERE trip_id = ? AND to_user = ? AND is_read = 0", 
             (trip_id, member)
         ).fetchone()
         mem_notif_count = mem_notif_row["cnt"] if mem_notif_row else 0
@@ -355,16 +365,16 @@ conn.close()
 
 
 # 🔔 =================================================================
-# 🟢 ระบบ "ข้อความแจ้งเตือนเรียกเก็บเงิน" (แชท LINE ซ้าย-ขวา + เคลียร์อัตโนมัติเมื่อเปิดดู)
+# 🟢 ระบบ "ข้อความแจ้งเตือนเรียกเก็บเงิน" (เพิ่มระบบออโต้รีเซ็ตเมื่อเปิดอ่าน)
 # =================================================================
 st.sidebar.markdown("---")
 
-# ดึงจำนวนข้อความค้างส่งเพื่อสร้าง Badge แจ้งเตือนสีแดง (🔴) บนหัวข้อ
+# ดึงจำนวนข้อความที่ยังไม่อ่าน (is_read = 0) เพื่อสร้าง Badge แจ้งเตือนสีแดง (🔴) บนหัวข้อ
 notif_count = 0
 if st.session_state["current_online_user"]:
     conn_count = get_db_connection()
     count_row = conn_count.execute(
-        "SELECT COUNT(*) as cnt FROM notifications WHERE trip_id = ? AND to_user = ?", 
+        "SELECT COUNT(*) as cnt FROM notifications WHERE trip_id = ? AND to_user = ? AND is_read = 0", 
         (trip_id, st.session_state["current_online_user"])
     ).fetchone()
     notif_count = count_row["cnt"] if count_row else 0
@@ -378,7 +388,7 @@ else:
 if st.session_state["current_online_user"]:
     my_name = st.session_state["current_online_user"]
     
-    # ดึงข้อความแจ้งเตือนที่มีคนส่งถึงโปรไฟล์เราภายใน Event นี้ออกมารอแสดงผลก่อน
+    # ดึงข้อความแจ้งเตือนทั้งหมดที่มีคนส่งถึงโปรไฟล์เราภายใน Event นี้
     conn_notif = get_db_connection()
     my_notifs = conn_notif.execute(
         "SELECT * FROM notifications WHERE trip_id = ? AND to_user = ? ORDER BY id DESC", 
@@ -386,27 +396,29 @@ if st.session_state["current_online_user"]:
     ).fetchall()
     conn_notif.close()
     
-    # ใช้ Checkbox ตกแต่งเป็นปุ่มเปิด/ปิดกล่องข้อความ เพื่อดักจับ Event ตอนกดเปิดดู
-    show_inbox = st.sidebar.checkbox(f"📥 เปิดกล่องข้อความของคุณ ({len(my_notifs)})", value=False, key="open_inbox_trigger")
+    # 📑 กล่องรับข้อความแจ้งเตือนที่ส่งถึงเรา
+    box_label = f"📥 กล่องข้อความของคุณ ({len(my_notifs)})"
     
-    if show_inbox:
-        # ⚡ ถ้าผู้ใช้งานเปิดกล่องข้อความ และมียอดแจ้งเตือนตกค้าง ให้ลบออกจากฐานข้อมูลทันที
+    # สร้าง Expander แบบตรวจจับสเตตัสการคลิกเปิดอ่าน
+    messages_box = st.sidebar.expander(box_label, expanded=False)
+    
+    with messages_box:
+        # ⚡ 🟢 หัวใจหลัก: ถ้าผู้ใช้กางเปิดอ่านกล่องข้อความนี้ ให้รันคำสั่งรีเซ็ตไฟแจ้งเตือนทันที!
         if notif_count > 0:
-            conn_clear = get_db_connection()
-            conn_clear.execute("DELETE FROM notifications WHERE trip_id = ? AND to_user = ?", (trip_id, my_name))
-            conn_clear.commit()
-            conn_clear.close()
-            # แจ้งเตือนผู้ใช้ว่าเคลียร์เรียบร้อยแล้ว
-            st.toast("📥 เปิดอ่านแล้ว - ล้างรายการแจ้งเตือนตกค้างเรียบร้อย")
-            time.sleep(0.5)
-            st.rerun()
-
-        # แสดงผลข้อความแชทซ้าย-ขวา (LINE Style) ให้ผู้ใช้เห็นในขณะที่เปิดหน้าต่างนี้อยู่
+            conn_reset = get_db_connection()
+            conn_reset.execute(
+                "UPDATE notifications SET is_read = 1 WHERE trip_id = ? AND to_user = ? AND is_read = 0",
+                (trip_id, my_name)
+            )
+            conn_reset.commit()
+            conn_reset.close()
+            st.rerun() # รีสคริปต์หน้าจอเพื่อให้ตัวนับเลขเมนูสีแดงอัปเดตหายไปทันตาเห็น
+            
         if not my_notifs:
-            st.caption("ไม่มีข้อความแจ้งเตือนตกค้าง")
+            st.caption("ไม่มีข้อความเรียกเก็บเงินใหม่")
         else:
             for notif in my_notifs:
-                is_system_or_me = notif['from_user'] in ["ระบบสรุปยอด", my_name]
+                is_system_or_me = notif['from_user'] in ["ระบบสรุปยอด", my_name] or notif['is_auto'] == 1
                 
                 if is_system_or_me:
                     # 🟢 แชทฝั่งขวา (สีเขียวสไตล์ LINE)
@@ -428,10 +440,19 @@ if st.session_state["current_online_user"]:
                         </div>
                     </div>
                     '''
+                
                 st.markdown(chat_html, unsafe_allow_html=True)
-            
-            st.caption("💡 ข้อความเหล่านี้ถูกอ่านและเคลียร์ออกจากระบบเรียบร้อยแล้วเมื่อคุณเปิดกล่องนี้")
-            st.markdown("<div style='margin-bottom: 15px; border-bottom: 1px dashed #DDD;'></div>", unsafe_allow_html=True)
+                
+                # ปุ่มกดลบซ่อนอยู่ใต้ข้อความแชทนั้นๆ (ใช้สำหรับเคลียร์ลบกล่องประวัติ)
+                if st.button("🗑️ ลบประวัติข้อความนี้", key=f"del_notif_{notif['id']}", type="secondary", use_container_width=True):
+                    conn_del_notif = get_db_connection()
+                    conn_del_notif.execute("DELETE FROM notifications WHERE id = ?", (notif['id'],))
+                    conn_del_notif.commit()
+                    conn_del_notif.close()
+                    st.toast("ลบประวัติข้อความเรียบร้อย")
+                    time.sleep(0.3)
+                    st.rerun()
+                st.markdown("<div style='margin-bottom: 15px; border-bottom: 1px dashed #DDD;'></div>", unsafe_allow_html=True)
 
     # ฟอร์มเขียนข้อความเพื่อส่งหาเพื่อนในกลุ่ม
     with st.sidebar.expander("📝 ส่งข้อความเรียกเก็บเงิน"):
@@ -446,7 +467,7 @@ if st.session_state["current_online_user"]:
                 if notif_msg.strip():
                     conn_send_notif = get_db_connection()
                     conn_send_notif.execute(
-                        "INSERT INTO notifications (trip_id, to_user, from_user, message) VALUES (?, ?, ?, ?)",
+                        "INSERT INTO notifications (trip_id, to_user, from_user, message, is_auto, is_read) VALUES (?, ?, ?, ?, 0, 0)",
                         (trip_id, send_to, my_name, notif_msg.strip())
                     )
                     conn_send_notif.commit()
@@ -596,59 +617,60 @@ with tab3:
         while debtors and creditors:
             amt = min(abs(debtors[0][1]), creditors[0][1])
             debtor_name = debtors[0][0]
-            creditor_name = creditors[0][0]
+            credential_name = creditors[0][0]
             
-            prof = user_profiles.get(creditor_name, {})
+            prof = user_profiles.get(credential_name, {})
             pp = (prof.get("promptpay") or "").strip()
             b_name = (prof.get("bank_name") or "").strip()
             b_acc = (prof.get("bank_acc") or "").strip()
             
             me_note = " (⚠️ รายการที่คุณต้องโอน)" if debtor_name == st.session_state["current_online_user"] else ""
-            st.markdown(f"💳 **{debtor_name}** โอนให้ 👉 **{creditor_name}** จำนวน **{amt:,.2f}** บาท **{me_note}**")
+            st.markdown(f"💳 **{debtor_name}** โอนให้ 👉 **{credential_name}** จำนวน **{amt:,.2f}** บาท **{me_note}**")
             
             if pp or b_acc:
                 col_pp, col_bank = st.columns(2)
                 with col_pp:
                     if pp:
-                        st.caption(f"📱 พร้อมเพย์ {creditor_name}")
+                        st.caption(f"📱 พร้อมเพย์ {credential_name}")
                         st.code(pp, language="text")
                 with col_bank:
                     if b_acc:
                         label = f"🏦 {b_name}" if b_name else "🏦 เลขบัญชี"
-                        st.caption(f"{label} ของ {creditor_name}")
+                        st.caption(f"{label} ของ {credential_name}")
                         st.code(b_acc, language="text")
             else:
-                st.warning(f"⚠️ {creditor_name} ยังไม่ได้บันทึกข้อมูลรายละเอียดเลขบัญชีในหน้าโปรไฟล์ส่วนตัว")
+                st.warning(f"⚠️ {credential_name} ยังไม่ได้บันทึกข้อมูลรายละเอียดเลขบัญชีในหน้าโปรไฟล์ส่วนตัว")
             
             st.write("---")
-            final_tx.append((debtor_name, creditor_name, amt))
+            final_tx.append((debtor_name, credential_name, amt))
             debtors[0][1] += amt; creditors[0][1] -= amt
             if abs(debtors[0][1]) < 0.01: debtors.pop(0)
             if abs(creditors[0][1]) < 0.01: creditors.pop(0)
 
         # ====================================================================
-        # 🔔 ระบบส่งยอดเข้ากล่องข้อความออโตเมติก เมื่อมีการเปิดดูหน้าสรุปเคลียร์เงิน
+        # 🔔 🟢 ระบบส่งยอดเข้ากล่องข้อความออโตเมติก
         # ====================================================================
         current_viewer = st.session_state["current_online_user"]
-        conn_auto_notif = get_db_connection()
+        bill_fingerprint = f"bill_sync_{'-'.join([str(r['id']) for r in expenses_rows])}"
         
-        for d_n, c_n, a_m in final_tx:
-            auto_msg = f"🔔 ยอดสรุปทริป {current_trip}: คุณมีค้างโอนให้ [{c_n}] จำนวน {a_m:,.2f} บาท รบกวนตรวจสอบในแท็บสรุปเงินด้วยน้า 🙏"
-            
-            # เช็คก่อนว่าเคยส่งข้อความตัวนี้ไปหาลูกหนี้คนนี้แล้วหรือยัง (ป้องกันระบบยิงข้อความซ้ำจาก Autorefresh)
-            already_sent = conn_auto_notif.execute(
-                "SELECT id FROM notifications WHERE trip_id = ? AND to_user = ? AND message = ?",
-                (trip_id, d_n, auto_msg)
-            ).fetchone()
-            
-            if not already_sent:
-                conn_auto_notif.execute(
-                    "INSERT INTO notifications (trip_id, to_user, from_user, message) VALUES (?, ?, ?, ?)",
-                    (trip_id, d_n, current_viewer if current_viewer else "ระบบสรุปยอด", auto_msg)
-                )
-        conn_auto_notif.commit()
-        conn_auto_notif.close()
-        # ====================================================================
+        if st.session_state.get("last_notified_fingerprint") != bill_fingerprint:
+            conn_auto_notif = get_db_connection()
+            for d_n, c_n, a_m in final_tx:
+                auto_msg = f"🔔 ยอดสรุปทริป {current_trip}: คุณมีค้างโอนให้ [{c_n}] จำนวน {a_m:,.2f} บาท รบกวนตรวจสอบในแท็บสรุปเงินด้วยน้า 🙏"
+                
+                already_sent = conn_auto_notif.execute(
+                    "SELECT id FROM notifications WHERE trip_id = ? AND to_user = ? AND message = ? AND is_auto = 1",
+                    (trip_id, d_n, auto_msg)
+                ).fetchone()
+                
+                if not already_sent:
+                    conn_auto_notif.execute(
+                        "INSERT INTO notifications (trip_id, to_user, from_user, message, is_auto, is_read) VALUES (?, ?, ?, ?, 1, 0)",
+                        (trip_id, d_n, "ระบบสรุปยอด", auto_msg)
+                    )
+            conn_auto_notif.commit()
+            conn_auto_notif.close()
+            st.session_state["last_notified_fingerprint"] = bill_fingerprint
 
         # ================= ส่วนระบบส่งข้อมูลเข้า LINE =================
         st.subheader("📲 ส่งสรุปยอดเข้า LINE")
@@ -661,57 +683,13 @@ with tab3:
             line_msg += f"💳 {d_n} โอนให้ 👉 {c_n} = {a_m:,.2f} บาท\n"
             prof = user_profiles.get(c_n, {})
             pp = (prof.get("promptpay") or "").strip()
-            b_name = (prof.get("bank_name") or "").strip()
-            b_acc = (prof.get("bank_acc") or "").strip()
-            if pp: line_msg += f"   • พร้อมเพย์: {pp}\n"
-            if b_acc: line_msg += f"   • ธนาคาร: {b_name} ({b_acc})\n"
-            line_msg += "\n"
-        line_msg += "-------------------------------\n"
-        line_msg += "ฝากเคลียร์เงินกันด้วยน้าาา ✈️🥳"
-
+            if pp:
+                line_msg += f"   (📱 พร้อมเพย์: {pp})\n"
+        line_msg += "-------------------------------"
+        
+        st.text_area("📋 ข้อความที่จะส่งเข้า LINE:", value=line_msg, height=150, disabled=True)
+        
         encoded_msg = urllib.parse.quote(line_msg)
-        line_share_url = f"https://line.me/R/msg/text/?{encoded_msg}"
-
-        st.markdown(
-            f'''
-            <a href="{line_share_url}" target="_blank" style="text-decoration: none;">
-                <button style="
-                    background-color: #06C755; 
-                    color: white; 
-                    border: none; 
-                    padding: 12px 20px; 
-                    font-size: 16px; 
-                    font-weight: bold;
-                    border-radius: 8px; 
-                    cursor: pointer;
-                    display: flex;
-                    align-items: center;
-                    gap: 10px;
-                    width: 100%;
-                    justify-content: center;
-                    box-shadow: 0px 4px 6px rgba(0,0,0,0.1);
-                ">
-                    💬 ส่งแผนการโอนเงินไปที่แอป LINE
-                </button>
-            </a>
-            ''', 
-            unsafe_allow_html=True
-        )
-        st.write("---")
-        # ============================================================
-
-        if st.button("🎯 บันทึกปิด Event", type="primary"):
-            conn = get_db_connection()
-            conn.execute("DELETE FROM settlements WHERE trip_id = ?", (trip_id,))
-            for t in final_tx: conn.execute("INSERT INTO settlements (trip_id, debtor, creditor, amount) VALUES (?,?,?,?)", (trip_id, t[0], t[1], t[2]))
-            conn.commit(); conn.close()
-            st.balloons()
-            st.success("🎯 บันทึกปิดEventและเคลียร์ยอดเงินทั้งหมดสำเร็จเรียบร้อยแล้ว!")
-            time.sleep(1.5)
-            st.rerun()
-
-        st.subheader("📋 ประวัติการเคลียร์")
-        conn = get_db_connection()
-        saved = pd.read_sql_query(f"SELECT debtor as 'จาก', creditor as 'ถึง', amount as 'จำนวน' FROM settlements WHERE trip_id = {trip_id}", conn)
-        conn.close()
-        if not saved.empty: st.table(saved)
+        line_url = f"https://line.me/R/msg/text/?{encoded_msg}"
+        
+        st.link_button("🟢 แชร์สรุปยอดเข้าแอป LINE", line_url, type="primary", use_container_width=True)

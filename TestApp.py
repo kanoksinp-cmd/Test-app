@@ -453,7 +453,7 @@ with tab3:
         # ค้นหาว่า ณ แผนการเงินปัจจุบัน ตัวเราต้องโอนให้ใครบ้างเพื่อใช้อ้างอิงตอนกดปุ่มเคลียร์เงิน
         debtors_temp = [[m, b] for m, b in net.items() if b < -0.01]
         creditors_temp = [[m, b] for m, b in net.items() if b > 0.01]
-        my_targets = [] # เก็บ tuple (โอนให้ใคร, จำนวนเงิน)
+        my_targets = []
         
         while debtors_temp and creditors_temp:
             amt_t = min(abs(debtors_temp[0][1]), creditors_temp[0][1])
@@ -470,14 +470,13 @@ with tab3:
             if my_balance < -0.01:
                 st.error(f"🔴 **⚠️ คุณมียอดค้างชำระ:** สวัสดีคุณ **{my_name}** บิลทริปนี้คุณมียอดที่ **ต้องจ่ายออก** ทั้งหมด **{abs(my_balance):,.2f}** บาท")
                 
-                # 🔄 ปรับปรุงให้ปุ่มอัปเดตเข้าตารางบันทึกเรียกเก็บเงิน (expenses) โดยตรง
+                # 🔄 ปุ่มยืนยันการเคลียร์เงินเพื่อบันทึกตรงเข้าประวัติเรียกเก็บเงิน (Expenses)
                 if st.button("✅ ฉันโอนเงินเคลียร์ยอดเรียบร้อยแล้ว", key="confirm_paid_btn", type="primary"):
                     if my_targets:
                         conn = get_db_connection()
-                        # วนลูปสร้างบิลเรียกเก็บเงินใหม่ในประวัติบิล แยกตามคนที่ตัวเราต้องโอนให้จริง
                         for target_creditor, target_amount in my_targets:
                             clear_desc = f"💸 [เคลียร์บิล] {my_name} โอนเงินคืนให้ {target_creditor}"
-                            # ให้สิทธิ์คนรับเงินคืนเป็น Payer และคนจ่ายคืน (ตัวเรา) เป็นคนหารคนเดียว ยอดเน็ตจะหักล้างกันพอดีในตารางเรียกเก็บเงิน
+                            # บันทึกบิล: คนรับเงินเป็น Payer และคนจ่ายเงิน (ตัวเรา) เป็นคนหารคนเดียว ยอดเน็ตจะหักล้างกันในตารางกลางทันที
                             conn.execute(
                                 "INSERT INTO expenses (trip_id, description, amount, payer_name, split_members) VALUES (?,?,?,?,?)",
                                 (trip_id, clear_desc, target_amount, target_creditor, my_name)

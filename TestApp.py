@@ -12,88 +12,6 @@ from streamlit_autorefresh import st_autorefresh
 # 1. ตั้งค่าหน้าจอและโครงสร้างพื้นฐาน
 st.set_page_config(page_title="Trip Expense Splitter Pro", layout="wide")
 
-# ====================================================================
-# 🎨 🛠️ ส่วนที่เพิ่มใหม่: ระบบเลือกธีม 10 แบบ (รวมอนิเมะยอดนิยม + พื้นหลัง)
-# ====================================================================
-st.sidebar.header("🎨 ปรับแต่งธีมแอปพลิเคชัน")
-
-THEMES = {
-    "✨ Light Mode Default": {
-        "bg": "#FFFFFF", "text": "#31333F", "card": "#F0F2F6", "sidebar": "#F0F2F6",
-        "bg_img": "none"
-    },
-    "🌙 Dark Mode Default": {
-        "bg": "#0E1117", "text": "#FAFAFA", "card": "#262730", "sidebar": "#262730",
-        "bg_img": "none"
-    },
-    "⚔️ Demon Slayer (ดาบพิฆาตอสูร)": {
-        "bg": "#141d26", "text": "#ffffff", "card": "#1c3d31", "sidebar": "#2a1b27",
-        "bg_img": "url('https://images.alphacoders.com/105/1057765.jpg')"
-    },
-    "🏴‍☠️ One Piece (วันพีซ)": {
-        "bg": "#0b1d33", "text": "#f4e04d", "card": "#173459", "sidebar": "#0d233e",
-        "bg_img": "url('https://images.alphacoders.com/134/1344264.png')"
-    },
-    "🦊 Naruto (นินจาจอมคาถา)": {
-        "bg": "#1f140e", "text": "#ffffff", "card": "#ff7c24", "sidebar": "#33241b",
-        "bg_img": "url('https://images.alphacoders.com/132/1325176.png')"
-    },
-    "🌌 Jujutsu Kaisen (มหาเวทย์ผนึกมาร)": {
-        "bg": "#080b10", "text": "#df2020", "card": "#121824", "sidebar": "#1b1424",
-        "bg_img": "url('https://images.alphacoders.com/112/1127027.jpg')"
-    },
-    "🧬 Attack on Titan (ผ่าพิภพไททัน)": {
-        "bg": "#1c1611", "text": "#edd9bc", "card": "#423225", "sidebar": "#2d2218",
-        "bg_img": "url('https://images.alphacoders.com/135/1352655.jpeg')"
-    },
-    "⚡ Cyberpunk: Edgerunners": {
-        "bg": "#000000", "text": "#00ff66", "card": "#fcee0a", "sidebar": "#1c1c1c",
-        "bg_img": "url('https://images.alphacoders.com/126/1262804.jpg')"
-    },
-    "🌸 Pastel Soft (พาสเทลหวานๆ)": {
-        "bg": "#FFF0F5", "text": "#4A4A4A", "card": "#FFD1DC", "sidebar": "#E8D3FC",
-        "bg_img": "none"
-    },
-    "🌲 Nature Forest (ผ่อนคลายธรรมชาติ)": {
-        "bg": "#E8F5E9", "text": "#1B5E20", "card": "#C8E6C9", "sidebar": "#A5D6A7",
-        "bg_img": "none"
-    }
-}
-
-selected_theme_name = st.sidebar.selectbox("เลือกธีมที่ต้องการ:", list(THEMES.keys()))
-theme = THEMES[selected_theme_name]
-
-# ฝัง CSS สไตล์ดิ้งเพื่อควบคุม Background, ตัวอักษร และการทำเบลอภาพพื้นหลัง (Glassmorphism)
-theme_css = f"""
-<style>
-    .stApp {{
-        background: {theme['bg_img']} no-repeat center center fixed;
-        background-size: cover;
-        background-color: {theme['bg']};
-        color: {theme['text']};
-    }}
-    
-    /* สไตล์สำหรับทำให้ส่วนอ่านง่ายขึ้นเมื่อมีภาพพื้นหลัง */
-    div[data-testid="stVerticalBlock"] > div {{
-        background-color: {theme['card']}dd; /* เติมความโปร่งใสเล็กน้อย */
-        padding: 10px;
-        border-radius: 10px;
-        margin-bottom: 5px;
-    }}
-    
-    /* ยกเว้นสำหรับ Sidebar */
-    section[data-testid="stSidebar"] {{
-        background-color: {theme['sidebar']};
-    }}
-    
-    h1, h2, h3, h4, h5, h6, p, label, span {{
-        color: {theme['text']} !important;
-    }}
-</style>
-"""
-st.markdown(theme_css, unsafe_allow_html=True)
-# ====================================================================
-
 # 🔄 สั่งให้ Streamlit รีเฟรชหน้าจออัตโนมัติทุกๆ 1,000 มิลลิวินาที (1 วินาที)
 st_autorefresh(interval=1000, limit=None, key="trip_app_live_refresh")
 
@@ -726,5 +644,134 @@ with tab2:
     if not expenses: st.info("ยังไม่มีข้อมูลค่าใช้จ่ายในกลุ่มนี้ รายการจะอัปเดตทันทีเมื่อเครื่องอื่นกรอกข้อมูล")
     else:
         for row in expenses:
-            with st.expander(f"📌 {row['description']} | {row['amount']:,.2f} บาท"):
-                pass # แสดงโค้ดส่วนที่เหลือของคุณตามเดิม
+            with st.expander(f"📌 {row['description']} | {row['amount']:,.2f} บาท (โดย {row['payer_name']})"):
+                c1, c2 = st.columns([1, 1.2])
+                with c1:
+                    if row['image_blob']: st.image(row['image_blob'], use_container_width=True)
+                    else: st.caption("ไม่มีรูปสลิป")
+                with c2:
+                    with st.form(f"edit_{row['id']}"):
+                        u_desc = st.text_input("รายการ:", value=row['description'])
+                        u_amt = st.number_input("จำนวนเงิน:", value=row['amount'])
+                        current_payer = row['payer_name']
+                        payer_options = existing_members if current_payer in existing_members else existing_members + [current_payer]
+                        u_payer = st.selectbox("คนจ่าย:", payer_options, index=payer_options.index(current_payer))
+                        
+                        st.write("คนหาร:")
+                        u_split_to = [m for m in payer_options if st.checkbox(m, value=(m in row['split_members'].split(",")), key=f"ed_{row['id']}_{m}")]
+                        u_file = st.file_uploader("เปลี่ยนรูปสลิป:", type=['jpg','png','jpeg'])
+                        delete_img = st.checkbox("🗑️ ลบรูปภาพสลิปออก", key=f"delimg_{row['id']}")
+                        
+                        if st.form_submit_button("💾 อัปเดต", type="primary"):
+                            conn = get_db_connection()
+                            if delete_img:
+                                conn.execute("UPDATE expenses SET description=?, amount=?, payer_name=?, split_members=?, image_blob=NULL WHERE id=?", (u_desc, u_amt, u_payer, ",".join(u_split_to), row['id']))
+                            elif u_file:
+                                blob = compress_image(u_file)
+                                conn.execute("UPDATE expenses SET description=?, amount=?, payer_name=?, split_members=?, image_blob=? WHERE id=?", (u_desc, u_amt, u_payer, ",".join(u_split_to), blob, row['id']))
+                            else:
+                                conn.execute("UPDATE expenses SET description=?, amount=?, payer_name=?, split_members=? WHERE id=?", (u_desc, u_amt, u_payer, ",".join(u_split_to), row['id']))
+                            conn.commit(); conn.close()
+                            st.success(f"🔄 อัปเดตข้อมูลบิล '{u_desc}' สำเร็จ!")
+                            time.sleep(1)
+                            st.rerun()
+                        
+                    if st.button("🗑️ ลบบิล", key=f"del_b_{row['id']}", type="secondary"):
+                        conn = get_db_connection()
+                        conn.execute("DELETE FROM expenses WHERE id=?", (row['id'],))
+                        conn.commit(); conn.close()
+                        st.warning(f"🗑️ ลบรายการบิลเรียบร้อยแล้ว!")
+                        time.sleep(1)
+                        st.rerun()
+
+with tab3:
+    st.header("🤝 สรุปยอดแผนการกระจายเงิน")
+    conn = get_db_connection()
+    expenses_rows = conn.execute("SELECT * FROM expenses WHERE trip_id = ?", (trip_id,)).fetchall()
+    
+    user_profiles = {row['name']: {"promptpay": row['promptpay'], "bank_name": row['bank_name'], "bank_acc": row['bank_account']} 
+                     for row in conn.execute("SELECT name, promptpay, bank_name, bank_account FROM all_users").fetchall()}
+    conn.close()
+    
+    if not expenses_rows: 
+        st.info("ยังไม่มีข้อมูลรายการบิลที่จะนำมาคำนวณยอดเงิน")
+    else:
+        all_involved_members = set(existing_members)
+        for r in expenses_rows:
+            all_involved_members.add(r['payer_name'])
+            all_involved_members.update(r['split_members'].split(","))
+            
+        net = {m: 0.0 for m in all_involved_members}
+        for r in expenses_rows:
+            net[r['payer_name']] += r['amount']
+            s_list = r['split_members'].split(",")
+            share = r['amount'] / len(s_list)
+            for m in s_list: net[m] -= share
+        
+        c1, c2 = st.columns(2)
+        c1.write("**🟢 คนที่ต้องได้รับเงินคืน:**")
+        for m, b in net.items():
+            if b > 0.01: c1.success(f"{m}: {b:,.2f} บาท")
+        c2.write("**🔴 คนที่ต้องจ่ายออก:**")
+        for m, b in net.items():
+            if b < -0.01: c2.error(f"{m}: {abs(b):,.2f} บาท")
+        
+        st.subheader("🚀 แผนการโอนเงินคืน")
+        debtors = [[m, b] for m, b in net.items() if b < -0.01]
+        creditors = [[m, b] for m, b in net.items() if b > 0.01]
+        final_tx = []
+        
+        while debtors and creditors:
+            amt = min(abs(debtors[0][1]), creditors[0][1])
+            debtor_name = debtors[0][0]
+            credential_name = creditors[0][0]
+            
+            prof = user_profiles.get(credential_name, {})
+            pp = (prof.get("promptpay") or "").strip()
+            b_name = (prof.get("bank_name") or "").strip()
+            b_acc = (prof.get("bank_acc") or "").strip()
+            
+            me_note = " (⚠️ รายการที่คุณต้องโอน)" if debtor_name == st.session_state["current_online_user"] else ""
+            st.markdown(f"💳 **{debtor_name}** โอนให้ 👉 **{credential_name}** จำนวน **{amt:,.2f}** บาท **{me_note}**")
+            
+            if pp or b_acc:
+                col_pp, col_bank = st.columns(2)
+                with col_pp:
+                    if pp:
+                        st.caption(f"📱 พร้อมเพย์ {credential_name}")
+                        st.code(pp, language="text")
+                with col_bank:
+                    if b_acc:
+                        label = f"🏦 {b_name}" if b_name else "🏦 เลขบัญชี"
+                        st.caption(f"{label} ของ {credential_name}")
+                        st.code(b_acc, language="text")
+            else:
+                st.warning(f"⚠️ {credential_name} ยังไม่ได้บันทึกข้อมูลรายละเอียดเลขบัญชีในหน้าโปรไฟล์ส่วนตัว")
+            
+            st.write("---")
+            final_tx.append((debtor_name, credential_name, amt))
+            debtors[0][1] += amt; creditors[0][1] -= amt
+            if abs(debtors[0][1]) < 0.01: debtors.pop(0)
+            if abs(creditors[0][1]) < 0.01: creditors.pop(0)
+
+        # ================= ส่วนระบบส่งข้อมูลเข้า LINE =================
+        st.subheader("📲 ส่งสรุปยอดเข้า LINE")
+        
+        line_msg = f"📊 สรุปยอดค่าใช้จ่ายทริป: {current_trip}\n"
+        if has_valid_date:
+            line_msg += f"📅 วันที่: {current_trip_date}\n"
+        line_msg += "-------------------------------\n"
+        for d_n, c_n, a_m in final_tx:
+            line_msg += f"💳 {d_n} โอนให้ 👉 {c_n} = {a_m:,.2f} บาท\n"
+            prof = user_profiles.get(c_n, {})
+            pp = (prof.get("promptpay") or "").strip()
+            if pp:
+                line_msg += f"   (📱 พร้อมเพย์: {pp})\n"
+        line_msg += "-------------------------------"
+        
+        st.text_area("📋 ข้อความที่จะส่งเข้า LINE:", value=line_msg, height=150, disabled=True)
+        
+        encoded_msg = urllib.parse.quote(line_msg)
+        line_url = f"https://line.me/R/msg/text/?{encoded_msg}"
+        
+        st.link_button("🟢 แชร์สรุปยอดเข้าแอป LINE", line_url, type="primary", use_container_width=True)

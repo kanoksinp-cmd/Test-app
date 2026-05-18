@@ -365,7 +365,7 @@ conn.close()
 
 
 # 🔔 =================================================================
-# ระบบ "แยกแชทรายบุคคล + พิมพ์ตอบกลับในกล่อง (ล้างข้อความเมื่อส่งสำเร็จ)" 💬
+# ระบบ "แยกแชทรายบุคคล + พิมพ์ตอบกลับในกล่อง" 💬
 # =================================================================
 st.sidebar.markdown("---")
 
@@ -434,12 +434,10 @@ if st.session_state["current_online_user"]:
                         conn_reset_person.close()
                         st.rerun()
                     
-                    # 🟢 ส่วนการพิมพ์ตอบกลับในกล่องแชท (พร้อมกลไก Clear ข้อความหลังกดส่ง)
+                    # 🟢 ส่วนการพิมพ์ตอบกลับในกล่องแชทของคนนั้นๆ โดยตรง
                     if sender != "ระบบสรุปยอด":
-                        with st.form(key=f"reply_form_{sender}", clear_on_submit=True):
-                            reply_key = f"reply_in_{sender}"
-                            reply_text = st.text_input("พิมพ์ตอบกลับเพื่อนที่นี่:", placeholder=f"คุยกับ {sender}...", key=reply_key)
-                            
+                        with st.form(key=f"reply_form_{sender}"):
+                            reply_text = st.text_input("พิมพ์ตอบกลับเพื่อนที่นี่:", placeholder=f"คุยกับ {sender}...", key=f"reply_in_{sender}")
                             if st.form_submit_button("↩️ ส่งข้อความตอบกลับ", use_container_width=True, type="primary"):
                                 if reply_text.strip():
                                     conn_reply = get_db_connection()
@@ -449,9 +447,6 @@ if st.session_state["current_online_user"]:
                                     )
                                     conn_reply.commit()
                                     conn_reply.close()
-                                    
-                                    # 🧹 เคลียร์ค่าค้างใน session_state ทันทีเพื่อให้กล่องกลับเป็นค่าว่าง
-                                    st.session_state[reply_key] = ""
                                     st.toast(f"🚀 ส่งคำตอบกลับหา {sender} แล้ว!")
                                     time.sleep(0.3)
                                     st.rerun()
@@ -493,35 +488,29 @@ if st.session_state["current_online_user"]:
                             st.rerun()
                         st.markdown("<div style='margin-bottom: 10px; border-bottom: 1px dashed #DDD;'></div>", unsafe_allow_html=True)
 
-    # ส่วนสร้างกล่องแชทแบบดั้งเดิม (พร้อมกลไก Clear ข้อความเมื่อกดส่งสำเร็จ)
+    # ส่วนสร้างกล่องแชทแบบดั้งเดิม (กรณีต้องการสร้างกล่องคุยกับคนใหม่ที่ยังไม่มีประวัติแชท)
     with st.sidebar.expander("📝 เปิดกล่องคุยกับเพื่อนใหม่"):
         other_members = [m for m in existing_members if m != my_name]
         if not other_members:
             st.caption("ไม่มีสมาชิกคนอื่นในกลุ่มนี้ที่จะส่งหา")
         else:
             send_to = st.selectbox("เลือกเพื่อนในทริป:", other_members, key="notif_send_to")
+            notif_msg = st.text_area("ข้อความแรก:", placeholder="ทักทายสร้างบิลแชทที่นี่...", key="notif_msg_text")
             
-            with st.form(key="new_chat_form", clear_on_submit=True):
-                msg_key = "notif_msg_text"
-                notif_msg = st.text_area("ข้อความแรก:", placeholder="ทักทายสร้างบิลแชทที่นี่...", key=msg_key)
-                
-                if st.form_submit_button("🚀 เริ่มส่งแชท", type="primary", use_container_width=True):
-                    if notif_msg.strip():
-                        conn_send_notif = get_db_connection()
-                        conn_send_notif.execute(
-                            "INSERT INTO notifications (trip_id, to_user, from_user, message, is_auto, is_read) VALUES (?, ?, ?, ?, 0, 0)",
-                            (trip_id, send_to, my_name, notif_msg.strip())
-                        )
-                        conn_send_notif.commit()
-                        conn_send_notif.close()
-                        
-                        # 🧹 ล้างกล่องข้อความทักทายคนใหม่
-                        st.session_state[msg_key] = ""
-                        st.toast(f"🚀 ส่งข้อความถึง {send_to} แล้ว!")
-                        time.sleep(0.5)
-                        st.rerun()
-                    else:
-                        st.error("⚠️ กรุณากรอกข้อความก่อนส่ง")
+            if st.button("🚀 เริ่มส่งแชท", type="primary", use_container_width=True):
+                if notif_msg.strip():
+                    conn_send_notif = get_db_connection()
+                    conn_send_notif.execute(
+                        "INSERT INTO notifications (trip_id, to_user, from_user, message, is_auto, is_read) VALUES (?, ?, ?, ?, 0, 0)",
+                        (trip_id, send_to, my_name, notif_msg.strip())
+                    )
+                    conn_send_notif.commit()
+                    conn_send_notif.close()
+                    st.toast(f"🚀 ส่งข้อความถึง {send_to} แล้ว!")
+                    time.sleep(0.5)
+                    st.rerun()
+                else:
+                    st.error("⚠️ กรุณากรอกข้อความก่อนส่ง")
 else:
     st.sidebar.caption("กรุณาเข้าสู่ระบบเพื่อใช้งานระบบแชท")
 # ====================================================================

@@ -532,7 +532,7 @@ with tab3:
         for m, b in net.items():
             if b < -0.01: c2.error(f"{m}: {abs(b):,.2f} บาท")
         
-        st.subheader("🚀 แผนการโอนเงินคืน (ดึงข้อมูลเรียลไทม์จากโปรไฟล์แต่ละคน)")
+        st.subheader("🚀 แผนการโอนเงินคืน")
         debtors = [[m, b] for m, b in net.items() if b < -0.01]
         creditors = [[m, b] for m, b in net.items() if b > 0.01]
         final_tx = []

@@ -86,7 +86,7 @@ def update_online_heartbeat(username):
         conn.commit()
         conn.close()
 
-# ฟังก์ชันดึงรายชื่อผู้ใช้ที่กำลังออนไลน์อยู่ ณ ปัจจุบัน
+# ฟังก์ชันดึงรายชื่อผู้ใช้ที่กำลังออนไลน์อยู่ ณ ปัจจุบัน (ใครขยับภายใน 15 วินาทีล่าสุด)
 def get_currently_online_users():
     conn = get_db_connection()
     rows = conn.execute("SELECT name FROM online_status WHERE last_seen >= datetime('now', 'localtime', '-15 seconds')").fetchall()
@@ -105,13 +105,13 @@ if st.session_state["current_online_user"]:
     update_online_heartbeat(st.session_state["current_online_user"])
 
 # --- 4. เมนูข้าง SIDEBAR ---
-st.sidebar.subheader("🔐 บัญชีผู้ใช้งานเครื่องนี้")
+st.sidebar.header("🔐 บัญชีผู้ใช้งานเครื่องนี้")
 
 conn = get_db_connection()
 existing_all_users = [row["name"] for row in conn.execute("SELECT name FROM all_users").fetchall()]
 conn.close()
 
-# ตรวจสอบสถานะการล็อกอินโปรไฟล์ของแท็บเบราว์เซอร์นี้ (บนสุดของ Sidebar)
+# ตรวจสอบสถานะการล็อกอินโปรไฟล์ของแท็บเบราว์เซอร์นี้
 if st.session_state["current_online_user"] is None:
     st.sidebar.warning("⚠️ เครื่องนี้ยังไม่ได้ล็อกอินโปรไฟล์")
     login_mode = st.sidebar.radio("ทางเลือกบัญชี:", ["เลือกโปรไฟล์ที่มีอยู่", "สร้างโปรไฟล์ใหม่"], horizontal=True)
@@ -145,7 +145,7 @@ if st.session_state["current_online_user"] is None:
             else:
                 st.sidebar.error("⚠️ กรุณากรอกชื่อ")
 else:
-    st.sidebar.markdown(f"👤 ผู้ใช้งานปัจจุบัน: **{st.session_state['current_online_user']}**")
+    st.sidebar.success(f"🟢 ผู้ใช้งานเครื่องนี้: **{st.session_state['current_online_user']}**")
     
     conn = get_db_connection()
     my_data = conn.execute("SELECT * FROM all_users WHERE name = ?", (st.session_state["current_online_user"],)).fetchone()
@@ -175,7 +175,7 @@ else:
         st.session_state["current_online_user"] = None
         st.rerun()
 
-# 🌐 ====== ส่วนแสดงรายชื่อสมาชิกที่กำลัง ONLINE (อยู่ใต้กล่อง User พอดี) ======
+# 🌐 ====== ส่วนแสดงรายชื่อสมาชิกที่กำลัง ONLINE ร่วมกันในระบบปัจจุบัน ======
 st.sidebar.markdown("---")
 st.sidebar.subheader("🌐 สมาชิกที่ออนไลน์ในขณะนี้")
 online_users = get_currently_online_users()
@@ -249,6 +249,7 @@ if not active_trips_df.empty:
 else:
     active_trip_display_list = []
 
+# หยุดการทำงานชั่วคราวหากยังไม่มี Event ในฐานข้อมูล
 if not active_trip_display_list:
     st.title("✈️ Trip Expense Splitter Pro")
     st.info("กรุณาสร้าง Event ใหม่ หรือกู้คืนจากถังขยะที่เมนูซ้ายมือเพื่อเริ่มต้นระบบ")
@@ -307,10 +308,12 @@ if existing_members:
     for member in existing_members:
         m_col1, m_col2 = st.sidebar.columns([4, 1])
         is_me = f" (คุณ)" if member == st.session_state["current_online_user"] else ""
+        
+        # 🟢 ไฟสถานะเช็คจากกล่องเวลา 15 วินาทีล่าสุด
         is_online_dot = "🟢 " if member in online_users else "⚪ "
         m_col1.caption(f"{is_online_dot}{member}{is_me}")
         
-        if m_col2.button("ออกจากกลุ่ม", key=f"remove_mem_{member}"):
+        if m_col2.button("ออกจากกลุ่ม", key=f"remove_mem_{member}", help=f"ถอด {member} ออกจาก Event"):
             conn.execute("DELETE FROM members WHERE trip_id = ? AND name = ?", (trip_id, member))
             conn.commit()
             st.toast(f"🗑️ ถอด {member} ออกแล้ว")
@@ -445,61 +448,6 @@ with tab3:
             s_list = r['split_members'].split(",")
             share = r['amount'] / len(s_list)
             for m in s_list: net[m] -= share
-
-        # ================= ส่วนระบบแจ้งเตือนสมาชิกรายบุคคลและภาพรวมกลุ่ม =================
-        st.markdown("### 🔔 กล่องแจ้งเตือนสถานะการเงินส่วนบุคคล")
-        my_name = st.session_state["current_online_user"]
-        
-        # ค้นหาว่า ณ แผนการเงินปัจจุบัน ตัวเราต้องโอนให้ใครบ้างเพื่อใช้อ้างอิงตอนกดปุ่มเคลียร์เงิน
-        debtors_temp = [[m, b] for m, b in net.items() if b < -0.01]
-        creditors_temp = [[m, b] for m, b in net.items() if b > 0.01]
-        my_targets = []
-        
-        while debtors_temp and creditors_temp:
-            amt_t = min(abs(debtors_temp[0][1]), creditors_temp[0][1])
-            d_name = debtors_temp[0][0]
-            c_name = creditors_temp[0][0]
-            if d_name == my_name:
-                my_targets.append((c_name, amt_t))
-            debtors_temp[0][1] += amt_t; creditors_temp[0][1] -= amt_t
-            if abs(debtors_temp[0][1]) < 0.01: debtors_temp.pop(0)
-            if abs(creditors_temp[0][1]) < 0.01: creditors_temp.pop(0)
-
-        if my_name in net:
-            my_balance = net[my_name]
-            if my_balance < -0.01:
-                st.error(f"🔴 **⚠️ คุณมียอดค้างชำระ:** สวัสดีคุณ **{my_name}** บิลทริปนี้คุณมียอดที่ **ต้องจ่ายออก** ทั้งหมด **{abs(my_balance):,.2f}** บาท")
-                
-                # 🔄 ปุ่มยืนยันการเคลียร์เงินเพื่อบันทึกตรงเข้าประวัติเรียกเก็บเงิน (Expenses)
-                if st.button("✅ ฉันโอนเงินเคลียร์ยอดเรียบร้อยแล้ว", key="confirm_paid_btn", type="primary"):
-                    if my_targets:
-                        conn = get_db_connection()
-                        for target_creditor, target_amount in my_targets:
-                            clear_desc = f"💸 [เคลียร์บิล] {my_name} โอนเงินคืนให้ {target_creditor}"
-                            # บันทึกบิล: คนรับเงินเป็น Payer และคนจ่ายเงิน (ตัวเรา) เป็นคนหารคนเดียว ยอดเน็ตจะหักล้างกันในตารางกลางทันที
-                            conn.execute(
-                                "INSERT INTO expenses (trip_id, description, amount, payer_name, split_members) VALUES (?,?,?,?,?)",
-                                (trip_id, clear_desc, target_amount, target_creditor, my_name)
-                            )
-                        conn.commit()
-                        conn.close()
-                        st.toast("🎉 บันทึกหลักฐานการเคลียร์เงินเข้าสู่ 'บันทึกเรียกเก็บเงิน' เรียบร้อยแล้ว!")
-                        time.sleep(1)
-                        st.rerun()
-                    
-            elif my_balance > 0.01:
-                st.success(f"🟢 **💰 ยอดรอรับคืน:** ยินดีด้วยคุณ **{my_name}** คุณสำรองจ่ายไปเยอะ ทริปนี้คุณมียอดที่ **จะได้คืน** ทั้งหมด **{my_balance:,.2f}** บาท")
-            else:
-                st.info(f"🔵 **✅ เคลียร์เรียบร้อย:** คุณ **{my_name}** ยอดเงินของคุณลงตัวพอดีเป๊ะ ไม่มีส่วนต่างค้างจ่ายหรือได้รับคืน")
-        
-        with st.expander("🚨 เช็ครายชื่อเพื่อนๆ ที่ต้องจ่ายเงินในทริปนี้", expanded=True):
-            debtors_list = {m: b for m, b in net.items() if b < -0.01}
-            if debtors_list:
-                for member, balance in debtors_list.items():
-                    st.warning(f"💸 **{member}** ยังมียอดต้องโอนออกจำนวน: **{abs(balance):,.2f}** บาท")
-            else:
-                st.success("🎉 ดีเยี่ยม! ตอนนี้ทุกคนเคลียร์ยอดเท่ากันหมดแล้ว ไม่มีใครค้างจ่าย")
-        st.markdown("---")
         
         c1, c2 = st.columns(2)
         c1.write("**🟢 คนที่ต้องได้รับเงินคืน:**")
@@ -546,6 +494,40 @@ with tab3:
             debtors[0][1] += amt; creditors[0][1] -= amt
             if abs(debtors[0][1]) < 0.01: debtors.pop(0)
             if abs(creditors[0][1]) < 0.01: creditors.pop(0)
+
+        # ================= ส่วนระบบแจ้งเตือนกล่องข้อความส่วนบุคคล (ใหม่) =================
+        st.subheader("🔔 สรุปยอดค้างชำระส่วนตัวของคุณ")
+        my_name = st.session_state["current_online_user"]
+        my_debts = [tx for tx in final_tx if tx[0] == my_name]
+
+        if my_debts:
+            total_to_pay = sum(tx[2] for tx in my_debts)
+            st.error(f"⚠️ **{my_name}** คุณมียอดค้างชำระที่ต้องโอนรวมทั้งหมด: **{total_to_pay:,.2f} บาท**")
+            
+            # วนลูปแสดงรายละเอียดหนี้ของตัวเองเป็นกล่องย่อย
+            for _, creditor, amount in my_debts:
+                prof = user_profiles.get(creditor, {})
+                pp_info = prof.get("promptpay") if prof.get("promptpay") else "ไม่ได้ระบุ"
+                b_name_info = prof.get("bank_name") if prof.get("bank_name") else ""
+                b_acc_info = prof.get("bank_acc") if prof.get("bank_acc") else "ไม่ได้ระบุ"
+                
+                with st.container(border=True):
+                    sub_col1, sub_col2 = st.columns([1.5, 2])
+                    with sub_col1:
+                        st.markdown(f"📍 ต้องโอนให้: **{creditor}**")
+                        st.markdown(f"💰 ยอดเงิน: <span style='color:red; font-weight:bold; font-size:18px;'>{amount:,.2f} บาท</span>", unsafe_allow_html=True)
+                    with sub_col2:
+                        st.caption("📋 ข้อมูลช่องทางรับเงิน")
+                        if b_name_info:
+                            st.write(f"🏦 {b_name_info}: {b_acc_info}")
+                        else:
+                            st.write(f"🏦 บัญชี: {b_acc_info}")
+                        st.write(f"📱 พร้อมเพย์: {pp_info}")
+        else:
+            st.success(f"🎉 ยินดีด้วย! **{my_name}** คุณไม่มีมียอดค้างชำระใน Event นี้ (หรือเป็นฝ่ายรอรับเงิน)")
+        
+        st.write("---")
+        # =========================================================================
 
         # ================= ส่วนระบบส่งข้อมูลเข้า LINE =================
         st.subheader("📲 ส่งสรุปยอดเข้า LINE")

@@ -318,20 +318,30 @@ existing_members = [row["name"] for row in conn.execute("SELECT name FROM member
 available_users = [u for u in all_users_list if u not in existing_members]
 
 if existing_members:
+    conn_member_notif = get_db_connection()
     for member in existing_members:
         m_col1, m_col2 = st.sidebar.columns([4, 1])
         is_me = f" (คุณ)" if member == st.session_state["current_online_user"] else ""
         
+        # 📨 เช็คจำนวนข้อความตกค้างของสมาชิกแต่ละคนใน Event นี้
+        mem_notif_row = conn_member_notif.execute(
+            "SELECT COUNT(*) as cnt FROM notifications WHERE trip_id = ? AND to_user = ?", 
+            (trip_id, member)
+        ).fetchone()
+        mem_notif_count = mem_notif_row["cnt"] if mem_notif_row else 0
+        has_msg_badge = f" ✉️ ({mem_notif_count})" if mem_notif_count > 0 else ""
+        
         # 🟢 ไฟสถานะเช็คจากกล่องเวลา 15 วินาทีล่าสุด
         is_online_dot = "🟢 " if member in online_users else "⚪ "
-        m_col1.caption(f"{is_online_dot}{member}{is_me}")
+        m_col1.caption(f"{is_online_dot}{member}{is_me}{has_msg_badge}")
         
         if m_col2.button("ออก", key=f"remove_mem_{member}", help=f"ถอด {member} ออกจาก Event"):
-            conn.execute("DELETE FROM members WHERE trip_id = ? AND name = ?", (trip_id, member))
-            conn.commit()
+            conn_member_notif.execute("DELETE FROM members WHERE trip_id = ? AND name = ?", (trip_id, member))
+            conn_member_notif.commit()
             st.toast(f"🗑️ ถอด {member} ออกแล้ว")
             time.sleep(1)
             st.rerun()
+    conn_member_notif.close()
 
 selected_u = st.sidebar.selectbox("ชวนเพื่อนออนไลน์เข้าร่วมบิล:", ["-- เลือกเพื่อน --"] + available_users)
 if st.sidebar.button("ดึงเข้ากลุ่ม"):
@@ -348,7 +358,22 @@ conn.close()
 # 🟢 เพิ่มส่วนระบบ "ข้อความแจ้งเตือนเรียกเก็บเงิน" ไว้ใน Sidebar
 # =================================================================
 st.sidebar.markdown("---")
-st.sidebar.header("🔔 ข้อความแจ้งเตือน")
+
+# ดึงจำนวนข้อความค้างส่งเพื่อสร้าง Badge แจ้งเตือนสีแดง (🔴) บนหัวข้อ
+notif_count = 0
+if st.session_state["current_online_user"]:
+    conn_count = get_db_connection()
+    count_row = conn_count.execute(
+        "SELECT COUNT(*) as cnt FROM notifications WHERE trip_id = ? AND to_user = ?", 
+        (trip_id, st.session_state["current_online_user"])
+    ).fetchone()
+    notif_count = count_row["cnt"] if count_row else 0
+    conn_count.close()
+
+if notif_count > 0:
+    st.sidebar.header(f"🔔 ข้อความแจ้งเตือน <span style='color:#FF4B4B; font-size:18px;'>🔴 ({notif_count})</span>", unsafe_allow_html=True)
+else:
+    st.sidebar.header("🔔 ข้อความแจ้งเตือน")
 
 if st.session_state["current_online_user"]:
     my_name = st.session_state["current_online_user"]

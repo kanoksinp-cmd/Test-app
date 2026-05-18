@@ -11,11 +11,10 @@ from streamlit_autorefresh import st_autorefresh
 # 1. ตั้งค่าหน้าจอ
 st.set_page_config(page_title="Trip Expense Splitter Pro", layout="wide")
 
-# 🔄 รีเฟรชหน้าจออัตโนมัติทุกๆ 1 วินาที เพื่อให้แชทและสถานะออนไลน์สดใหม่เสมอ
+# 🔄 รีเฟรชหน้าจออัตโนมัติเพื่อให้แชทอัปเดตแบบ Real-time
 st_autorefresh(interval=1000, limit=None, key="trip_app_live_refresh")
 
 DB_FILE = "trip_database.db"
-BANK_LIST = ["-- เลือกธนาคาร --", "กสิกรไทย", "ไทยพาณิชย์", "กรุงไทย", "กรุงเทพ", "กรุงศรี", "ทหารไทยธนชาต", "ออมสิน", "ธ.ก.ส.", "ยูโอบี"]
 
 # 2. ฟังก์ชันจัดการฐานข้อมูล
 def get_db_connection():
@@ -37,15 +36,6 @@ def init_db():
     conn.commit()
     conn.close()
 
-def compress_image(uploaded_file):
-    if uploaded_file is None: return None
-    img = Image.open(uploaded_file)
-    if img.mode in ("RGBA", "P"): img = img.convert("RGB")
-    img.thumbnail((800, 800))
-    buffer = io.BytesIO()
-    img.save(buffer, format="JPEG", quality=70)
-    return buffer.getvalue()
-
 def update_online_heartbeat(username):
     if username:
         conn = get_db_connection()
@@ -61,171 +51,177 @@ def get_currently_online_users():
 
 init_db()
 
-# 3. จัดการ Session สมาชิก
+# 3. Session Management
 if "current_online_user" not in st.session_state:
     st.session_state["current_online_user"] = None
 
 if st.session_state["current_online_user"]:
     update_online_heartbeat(st.session_state["current_online_user"])
 
-# --- 4. SIDEBAR ---
+# --- 4. SIDEBAR & โปรไฟล์ ---
 st.sidebar.header("🔐 โปรไฟล์ผู้ใช้งาน")
 conn = get_db_connection()
 existing_all_users = [row["name"] for row in conn.execute("SELECT name FROM all_users").fetchall()]
 conn.close()
 
 if st.session_state["current_online_user"] is None:
-    login_mode = st.sidebar.radio("เข้าใช้งาน:", ["เลือกชื่อที่มีอยู่", "สร้างชื่อใหม่"], horizontal=True)
-    if login_mode == "เลือกชื่อที่มีอยู่" and existing_all_users:
-        user_select = st.sidebar.selectbox("ชื่อของคุณ:", existing_all_users)
+    login_mode = st.sidebar.radio("เข้าใช้งาน:", ["เลือกชื่อเดิม", "สร้างใหม่"], horizontal=True)
+    if login_mode == "เลือกชื่อเดิม" and existing_all_users:
+        u_sel = st.sidebar.selectbox("ชื่อของคุณ:", existing_all_users)
         if st.sidebar.button("เข้าสู่ระบบ"):
-            st.session_state["current_online_user"] = user_select
+            st.session_state["current_online_user"] = u_sel
             st.rerun()
     else:
-        new_name = st.sidebar.text_input("ชื่อเล่น/ชื่อจริง:").strip()
+        n_name = st.sidebar.text_input("ชื่อเล่น:").strip()
         if st.sidebar.button("สร้างโปรไฟล์"):
-            if new_name:
+            if n_name:
                 conn = get_db_connection()
                 try:
-                    conn.execute("INSERT INTO all_users (name) VALUES (?)", (new_name,))
-                    conn.commit(); st.session_state["current_online_user"] = new_name; st.rerun()
-                except: st.sidebar.error("ชื่อนี้ซ้ำ")
+                    conn.execute("INSERT INTO all_users (name) VALUES (?)", (n_name,))
+                    conn.commit(); st.session_state["current_online_user"] = n_name; st.rerun()
+                except: st.sidebar.error("ชื่อซ้ำ")
                 finally: conn.close()
 else:
     st.sidebar.success(f"🟢 ออนไลน์: {st.session_state['current_online_user']}")
-    # อัปเดตข้อมูลบัญชี
-    conn = get_db_connection()
-    my_data = conn.execute("SELECT * FROM all_users WHERE name = ?", (st.session_state["current_online_user"],)).fetchone()
-    with st.sidebar.expander("⚙️ ตั้งค่าบัญชีรับเงิน"):
-        new_pp = st.text_input("เลขพร้อมเพย์:", value=my_data['promptpay'] if my_data['promptpay'] else "")
-        new_bank_acc = st.text_input("เลขบัญชีธนาคาร:", value=my_data['bank_account'] if my_data['bank_account'] else "")
-        if st.button("💾 บันทึก"):
-            conn.execute("UPDATE all_users SET promptpay = ?, bank_account = ? WHERE name = ?", (new_pp, new_bank_acc, st.session_state["current_online_user"]))
-            conn.commit(); st.toast("บันทึกสำเร็จ!"); time.sleep(0.5); st.rerun()
     if st.sidebar.button("🚪 ออกจากระบบ"):
         st.session_state["current_online_user"] = None; st.rerun()
-    conn.close()
 
-# --- 5. จัดการ Event (ทริป) ---
+# --- 5. ค้นหาทริปปัจจุบัน ---
 st.sidebar.markdown("---")
 conn = get_db_connection()
 active_trips_df = pd.read_sql_query("SELECT * FROM trips WHERE status = 0", conn)
 if not active_trips_df.empty:
-    selected_trip_name = st.sidebar.selectbox("🗺️ เลือก Event:", active_trips_df['name'].tolist())
-    trip_id = int(active_trips_df[active_trips_df['name'] == selected_trip_name]['id'].iloc[0])
-    current_trip_date = active_trips_df[active_trips_df['name'] == selected_trip_name]['trip_date'].iloc[0]
+    sel_trip = st.sidebar.selectbox("🗺️ เลือก Event:", active_trips_df['name'].tolist())
+    trip_id = int(active_trips_df[active_trips_df['name'] == sel_trip]['id'].iloc[0])
+    current_trip_date = active_trips_df[active_trips_df['name'] == sel_trip]['trip_date'].iloc[0]
 else:
-    st.sidebar.info("สร้างทริปใหม่ก่อนครับ")
-    st.title("🛄 กรุณาสร้าง Event ใหม่ที่เมนูด้านซ้าย")
+    st.sidebar.warning("สร้าง Event ใหม่ก่อน")
     st.stop()
 conn.close()
 
-# --- 6. พื้นที่หลัก (Main UI) ---
-st.title(f"✈️ ข้อมูล Event: {selected_trip_name}")
-if current_trip_date:
-    st.subheader(f"📅 วันที่จัด: {current_trip_date}")
+# --- 6. 💬 ระบบแชท (นำกลับมาให้แล้ว) ---
+st.sidebar.markdown("---")
+if st.session_state["current_online_user"]:
+    my_name = st.session_state["current_online_user"]
+    conn = get_db_connection()
+    # นับข้อความที่ยังไม่อ่าน
+    count_row = conn.execute("SELECT COUNT(*) as cnt FROM notifications WHERE trip_id = ? AND to_user = ? AND is_read = 0", (trip_id, my_name)).fetchone()
+    unread_cnt = count_row['cnt'] if count_row else 0
+    
+    st.sidebar.subheader(f"🔔 แชท & แจ้งเตือน {'🔴' if unread_cnt > 0 else ''}")
+    
+    with st.sidebar.expander(f"📥 เปิดกล่องข้อความ ({unread_cnt})", expanded=unread_cnt > 0):
+        messages = conn.execute("SELECT * FROM notifications WHERE trip_id = ? AND (to_user = ? OR from_user = ?) ORDER BY timestamp DESC LIMIT 10", (trip_id, my_name, my_name)).fetchall()
+        if not messages:
+            st.caption("ไม่มีข้อความ")
+        else:
+            for m in messages:
+                role = "คุณ" if m['from_user'] == my_name else m['from_user']
+                st.markdown(f"**{role}:** {m['message']}")
+                if m['to_user'] == my_name and m['is_read'] == 0:
+                    if st.button("อ่านแล้ว", key=f"read_{m['id']}"):
+                        conn.execute("UPDATE notifications SET is_read = 1 WHERE id = ?", (m['id'],))
+                        conn.commit(); st.rerun()
+                st.divider()
+        
+        # ส่งข้อความใหม่
+        members_in_trip = [r['name'] for r in conn.execute("SELECT name FROM members WHERE trip_id = ?", (trip_id,)).fetchall() if r['name'] != my_name]
+        if members_in_trip:
+            st.write("ส่งข้อความถึง:")
+            target = st.selectbox("เลือกเพื่อน:", members_in_trip, key="chat_target")
+            msg_input = st.text_input("พิมพ์ข้อความ:", key="chat_msg")
+            if st.button("🚀 ส่งแชท"):
+                conn.execute("INSERT INTO notifications (trip_id, to_user, from_user, message) VALUES (?,?,?,?)", (trip_id, target, my_name, msg_input))
+                conn.commit(); st.toast("ส่งแล้ว!"); st.rerun()
+    conn.close()
 
-tab1, tab2, tab3 = st.tabs(["📝 สร้างบิลใหม่", "📊 ประวัติบันทึกบิล", "💰 สรุปเคลียร์เงินสมาชิก"])
+# --- 7. พื้นที่หลัก TAB ---
+st.title(f"✈️ Event: {sel_trip}")
+tab1, tab2, tab3 = st.tabs(["📝 สร้างบิลใหม่", "📊 ประวัติบิล", "💰 สรุปเคลียร์เงิน"])
 
-# 👥 สมาชิก (จัดการที่ Sidebar)
-st.sidebar.subheader("👥 สมาชิกในกลุ่ม")
-conn = get_db_connection()
-existing_members = [row["name"] for row in conn.execute("SELECT name FROM members WHERE trip_id = ?", (trip_id,)).fetchall()]
-all_u = [u for u in existing_all_users if u not in existing_members]
-new_m = st.sidebar.selectbox("ชวนเพื่อนเข้ากลุ่ม:", ["-- เลือกเพื่อน --"] + all_u)
-if st.sidebar.button("➕ เพิ่มเข้ากลุ่ม") and new_m != "-- เลือกเพื่อน --":
-    conn.execute("INSERT INTO members (trip_id, name) VALUES (?, ?)", (trip_id, new_m))
-    conn.commit(); st.rerun()
-conn.close()
-
-# ==================== TAB 1 & 2 (ย่อส่วนไว้เพื่อเน้น TAB 3) ====================
 with tab1:
-    with st.form("bill_form"):
-        st.header("➕ เพิ่มบิลใหม่")
-        d_val = st.text_input("รายการ:")
-        a_val = st.number_input("จำนวนเงิน:", min_value=0.0)
-        p_val = st.selectbox("ใครจ่ายก่อน:", existing_members)
-        s_val = [m for m in existing_members if st.checkbox(m, value=True, key=f"s_{m}")]
-        if st.form_submit_button("💾 บันทึก"):
-            if d_val and a_val > 0:
+    conn = get_db_connection()
+    existing_members = [row["name"] for row in conn.execute("SELECT name FROM members WHERE trip_id = ?", (trip_id,)).fetchall()]
+    conn.close()
+    with st.form("add_bill"):
+        st.header("➕ เพิ่มบิล")
+        desc = st.text_input("รายการ:")
+        amt = st.number_input("จำนวนเงิน:", min_value=0.0)
+        payer = st.selectbox("คนจ่าย:", existing_members if existing_members else [my_name])
+        splitters = [m for m in existing_members if st.checkbox(m, value=True, key=f"split_{m}")]
+        if st.form_submit_button("บันทึก"):
+            if desc and amt > 0:
                 conn = get_db_connection()
                 conn.execute("INSERT INTO expenses (trip_id, description, amount, payer_name, split_members) VALUES (?,?,?,?,?)",
-                             (trip_id, d_val, a_val, p_val, ",".join(s_val)))
-                conn.commit(); conn.close(); st.success("บันทึกบิลแล้ว!"); st.rerun()
+                             (trip_id, desc, amt, payer, ",".join(splitters)))
+                conn.commit(); conn.close(); st.success("บันทึกสำเร็จ"); st.rerun()
 
 with tab2:
-    st.header("📊 รายการบิลทั้งหมด")
     conn = get_db_connection()
     exps = conn.execute("SELECT * FROM expenses WHERE trip_id = ?", (trip_id,)).fetchall()
     for e in exps:
-        st.text(f"📌 {e['description']} | {e['amount']} บาท (โดย {e['payer_name']})")
+        st.write(f"📌 {e['description']} | {e['amount']} บาท (โดย {e['payer_name']})")
     conn.close()
 
-# ==================== TAB 3: สรุปเคลียร์เงินสมาชิก (แบบที่คุณต้องการ) ====================
+# ==================== TAB 3: สรุปยอดแบบเดิม (ตามภาพ) ====================
 with tab3:
     st.header("🤝 สรุปยอดแผนการกระจายเงิน")
     conn = get_db_connection()
     expenses = conn.execute("SELECT * FROM expenses WHERE trip_id = ?", (trip_id,)).fetchall()
     members = [row["name"] for row in conn.execute("SELECT name FROM members WHERE trip_id = ?", (trip_id,)).fetchall()]
-    conn.close()
-
+    
     if not expenses:
         st.info("ยังไม่มีข้อมูลค่าใช้จ่าย")
     else:
         balance = {m: 0.0 for m in members}
         for row in expenses:
-            payer, amount = row['payer_name'], row['amount']
-            split_members = row['split_members'].split(',') if row['split_members'] else []
-            if not split_members: continue
-            share = amount / len(split_members)
-            if payer in balance: balance[payer] += amount
-            for m in split_members:
+            p, a = row['payer_name'], row['amount']
+            sm = row['split_members'].split(',') if row['split_members'] else []
+            if not sm: continue
+            share = a / len(sm)
+            if p in balance: balance[p] += a
+            for m in sm:
                 if m in balance: balance[m] -= share
 
-        creditors = [[name, bal] for name, bal in balance.items() if bal > 0.01]
-        debtors = [[name, -bal] for name, bal in balance.items() if bal < -0.01]
+        creditors = [[n, b] for n, b in balance.items() if b > 0.01]
+        debtors = [[n, -b] for n, b in balance.items() if b < -0.01]
 
-        col_c, col_d = st.columns(2)
-        with col_c:
+        c1, c2 = st.columns(2)
+        with c1:
             st.markdown("🟢 **คนที่ต้องได้รับเงินคืน:**")
-            for c_n, c_a in creditors: st.success(f"{c_n}: {c_a:,.2f} บาท")
-        with col_d:
+            for cn, ca in creditors: st.success(f"{cn}: {ca:,.2f} บาท")
+        with c2:
             st.markdown("🔴 **คนที่ต้องจ่ายออก:**")
-            for d_n, d_a in debtors: st.error(f"{d_n}: {d_a:,.2f} บาท")
+            for dn, da in debtors: st.error(f"{dn}: {da:,.2f} บาท")
 
         st.markdown("---")
         st.header("🚀 แผนการโอนเงินคืน")
+        summary_text = f"📊 สรุปยอดทริป: {sel_trip}\n----------------------------\n"
         
-        summary_text = f"📊 สรุปยอดค่าใช้จ่ายทริป: {selected_trip_name}\n📅 วันที่: {current_trip_date if current_trip_date else '-'}\n----------------------------\n"
-        temp_debtors, temp_creditors = [list(d) for d in debtors], [list(c) for c in creditors]
         i, j = 0, 0
-        while i < len(temp_debtors) and j < len(temp_creditors):
-            d_n, d_a = temp_debtors[i]
-            c_n, c_a = temp_creditors[j]
-            settled = min(d_a, c_a)
+        while i < len(debtors) and j < len(creditors):
+            dn, da = debtors[i]
+            cn, ca = creditors[j]
+            settled = min(da, ca)
             
-            conn = get_db_connection()
-            bank_data = conn.execute("SELECT promptpay FROM all_users WHERE name = ?", (c_n,)).fetchone()
-            conn.close()
-            pp = bank_data['promptpay'] if bank_data and bank_data['promptpay'] else "ยังไม่ได้ระบุ"
+            b_data = conn.execute("SELECT promptpay FROM all_users WHERE name = ?", (cn,)).fetchone()
+            pp = b_data['promptpay'] if b_data and b_data['promptpay'] else "ยังไม่ได้ระบุ"
 
-            st.markdown(f"💳 **{d_n}** โอนให้ 👉 **{c_n}** จำนวน **{settled:,.2f} บาท** ****")
-            st.caption(f"📭 พร้อมเพย์ {c_n}")
+            st.markdown(f"💳 **{dn}** โอนให้ 👉 **{cn}** จำนวน **{settled:,.2f} บาท** ****")
+            st.caption(f"📭 พร้อมเพย์ {cn}")
             st.code(pp, language="")
             
-            summary_text += f"💳 {d_n} โอนให้ 👉 {c_n} = {settled:,.2f} บาท\n( 📭 พร้อมเพย์: {pp} )\n"
-            
-            temp_debtors[i][1] -= settled; temp_creditors[j][1] -= settled
-            if temp_debtors[i][1] < 0.01: i += 1
-            if temp_creditors[j][1] < 0.01: j += 1
+            summary_text += f"💳 {dn} โอนให้ 👉 {cn} = {settled:,.2f} บาท\n( 📭 พร้อมเพย์: {pp} )\n"
+            debtors[i][1] -= settled; creditors[j][1] -= settled
+            if debtors[i][1] < 0.01: i += 1
+            if creditors[j][1] < 0.01: j += 1
 
         st.markdown("---")
         st.header("📲 ส่งสรุปยอดเข้า LINE")
-        line_msg = st.text_area("สรุปยอดสำหรับคัดลอก:", value=summary_text, height=200)
+        line_msg = st.text_area("สรุปยอดสำหรับแชร์:", value=summary_text, height=150)
         encoded_msg = urllib.parse.quote(line_msg)
-        line_url = f"https://line.me/R/msg/text/?{encoded_msg}"
-        
-        st.markdown(f"""<a href="{line_url}" target="_blank" style="text-decoration: none;">
+        st.markdown(f"""<a href="https://line.me/R/msg/text/?{encoded_msg}" target="_blank" style="text-decoration: none;">
                 <div style="background-color: #ff4b4b; color: white; padding: 10px; border-radius: 10px; text-align: center; font-weight: bold;">
-                    🔴 แชร์สรุปยอดเข้าแอป LINE
+                    🟢 แชร์สรุปยอดเข้าแอป LINE
                 </div></a>""", unsafe_allow_html=True)
+    conn.close()

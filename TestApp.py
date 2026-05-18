@@ -637,141 +637,128 @@ with tab1:
             else:
                 st.error("⚠️ กรุณากรอกข้อมูลรายการ จำนวนเงิน และเลือกผู้มีส่วนร่วมหารให้ครบถ้วน")
 
+# 📊 ส่วนที่รวมเพิ่มเติม: ประวัติบิลและการลบข้อมูล
 with tab2:
     conn = get_db_connection()
     expenses = conn.execute("SELECT * FROM expenses WHERE trip_id = ?", (trip_id,)).fetchall()
     conn.close()
-    if not expenses: st.info("ยังไม่มีข้อมูลค่าใช้จ่ายในกลุ่มนี้ รายการจะอัปเดตทันทีเมื่อเครื่องอื่นกรอกข้อมูล")
+    
+    if not expenses: 
+        st.info("ยังไม่มีข้อมูลค่าใช้จ่ายในกลุ่มนี้ รายการจะอัปเดตทันทีเมื่อเครื่องอื่นกรอกข้อมูล")
     else:
         for row in expenses:
             with st.expander(f"📌 {row['description']} | {row['amount']:,.2f} บาท (โดย {row['payer_name']})"):
-                c1, c2 = st.columns([1, 1.2])
+                c1, c2 = st.columns([1, 2])
+                
                 with c1:
-                    if row['image_blob']: st.image(row['image_blob'], use_container_width=True)
-                    else: st.caption("ไม่มีรูปสลิป")
+                    if row['image_blob']:
+                        st.image(row['image_blob'], caption="รูปหลักฐาน/สลิปแนบบิล", use_container_width=True)
+                    else:
+                        st.caption("ไม่มีรูปภาพหลักฐานแนบมากับบิลนี้")
+                        
                 with c2:
-                    with st.form(f"edit_{row['id']}"):
-                        u_desc = st.text_input("รายการ:", value=row['description'])
-                        u_amt = st.number_input("จำนวนเงิน:", value=row['amount'])
-                        current_payer = row['payer_name']
-                        payer_options = existing_members if current_payer in existing_members else existing_members + [current_payer]
-                        u_payer = st.selectbox("คนจ่าย:", payer_options, index=payer_options.index(current_payer))
-                        
-                        st.write("คนหาร:")
-                        u_split_to = [m for m in payer_options if st.checkbox(m, value=(m in row['split_members'].split(",")), key=f"ed_{row['id']}_{m}")]
-                        u_file = st.file_uploader("เปลี่ยนรูปสลิป:", type=['jpg','png','jpeg'])
-                        delete_img = st.checkbox("🗑️ ลบรูปภาพสลิปออก", key=f"delimg_{row['id']}")
-                        
-                        if st.form_submit_button("💾 อัปเดต", type="primary"):
-                            conn = get_db_connection()
-                            if delete_img:
-                                conn.execute("UPDATE expenses SET description=?, amount=?, payer_name=?, split_members=?, image_blob=NULL WHERE id=?", (u_desc, u_amt, u_payer, ",".join(u_split_to), row['id']))
-                            elif u_file:
-                                blob = compress_image(u_file)
-                                conn.execute("UPDATE expenses SET description=?, amount=?, payer_name=?, split_members=?, image_blob=? WHERE id=?", (u_desc, u_amt, u_payer, ",".join(u_split_to), blob, row['id']))
-                            else:
-                                conn.execute("UPDATE expenses SET description=?, amount=?, payer_name=?, split_members=? WHERE id=?", (u_desc, u_amt, u_payer, ",".join(u_split_to), row['id']))
-                            conn.commit(); conn.close()
-                            st.success(f"🔄 อัปเดตข้อมูลบิล '{u_desc}' สำเร็จ!")
-                            time.sleep(1)
-                            st.rerun()
-                        
-                    if st.button("🗑️ ลบบิล", key=f"del_b_{row['id']}", type="secondary"):
-                        conn = get_db_connection()
-                        conn.execute("DELETE FROM expenses WHERE id=?", (row['id'],))
-                        conn.commit(); conn.close()
-                        st.warning(f"🗑️ ลบรายการบิลเรียบร้อยแล้ว!")
+                    st.markdown(f"**👤 ผู้สำรองจ่ายก่อน:** {row['payer_name']}")
+                    st.markdown(f"**👥 สมาชิกที่มีชื่อร่วมหาร:** {row['split_members']}")
+                    
+                    # คำนวณส่วนแบ่งรายคนในบิลย่อยนี้
+                    member_count = len(row['split_members'].split(",")) if row['split_members'] else 1
+                    per_person = row['amount'] / member_count
+                    st.info(f"💸 ตกเฉลี่ยคนละ: {per_person:,.2f} บาท")
+                    
+                    if st.button("🗑️ ลบรายการบิลนี้ถาวร", key=f"del_exp_{row['id']}", type="secondary"):
+                        conn_del = get_db_connection()
+                        conn_del.execute("DELETE FROM expenses WHERE id = ?", (row['id'],))
+                        conn_del.commit()
+                        conn_del.close()
+                        st.toast(f"🗑️ ลบรายการบิล '{row['description']}' สำเร็จ!")
                         time.sleep(1)
                         st.rerun()
 
+# 💰 ส่วนที่รวมเพิ่มเติม: อัลกอริทึมเคลียร์เงินและจัดสรรหนี้อัตโนมัติ 
 with tab3:
-    st.header("🤝 สรุปยอดแผนการกระจายเงิน")
+    st.header("💰 หน้าสรุปยอดและจับคู่เรียกเก็บเงินรายบุคคล")
+    
     conn = get_db_connection()
-    expenses_rows = conn.execute("SELECT * FROM expenses WHERE trip_id = ?", (trip_id,)).fetchall()
+    all_expenses = conn.execute("SELECT * FROM expenses WHERE trip_id = ?", (trip_id,)).fetchall()
+    members_data = [m['name'] for m in conn.execute("SELECT name FROM members WHERE trip_id = ?", (trip_id,)).fetchall()]
     
-    user_profiles = {row['name']: {"promptpay": row['promptpay'], "bank_name": row['bank_name'], "bank_acc": row['bank_account']} 
-                     for row in conn.execute("SELECT name, promptpay, bank_name, bank_account FROM all_users").fetchall()}
-    conn.close()
-    
-    if not expenses_rows: 
-        st.info("ยังไม่มีข้อมูลรายการบิลที่จะนำมาคำนวณยอดเงิน")
+    if not all_expenses:
+        st.info("ยังไม่มีข้อมูลค่าใช้จ่ายในระบบจัดเก็บ เพื่อใช้ในการคำนวณสรุปยอด")
     else:
-        all_involved_members = set(existing_members)
-        for r in expenses_rows:
-            all_involved_members.add(r['payer_name'])
-            all_involved_members.update(r['split_members'].split(","))
+        # 1. คำนวณ Net Balance ของแต่ละคน
+        balances = {name: 0.0 for name in members_data}
+        
+        for exp in all_expenses:
+            p_name = exp['payer_name']
+            total_amt = exp['amount']
+            split_list = exp['split_members'].split(",") if exp['split_members'] else []
             
-        net = {m: 0.0 for m in all_involved_members}
-        for r in expenses_rows:
-            net[r['payer_name']] += r['amount']
-            s_list = r['split_members'].split(",")
-            share = r['amount'] / len(s_list)
-            for m in s_list: net[m] -= share
-        
-        c1, c2 = st.columns(2)
-        c1.write("**🟢 คนที่ต้องได้รับเงินคืน:**")
-        for m, b in net.items():
-            if b > 0.01: c1.success(f"{m}: {b:,.2f} บาท")
-        c2.write("**🔴 คนที่ต้องจ่ายออก:**")
-        for m, b in net.items():
-            if b < -0.01: c2.error(f"{m}: {abs(b):,.2f} บาท")
-        
-        st.subheader("🚀 แผนการโอนเงินคืน")
-        debtors = [[m, b] for m, b in net.items() if b < -0.01]
-        creditors = [[m, b] for m, b in net.items() if b > 0.01]
-        final_tx = []
-        
-        while debtors and creditors:
-            amt = min(abs(debtors[0][1]), creditors[0][1])
-            debtor_name = debtors[0][0]
-            credential_name = creditors[0][0]
+            if not split_list:
+                continue
+                
+            share_cost = total_amt / len(split_list)
             
-            prof = user_profiles.get(credential_name, {})
-            pp = (prof.get("promptpay") or "").strip()
-            b_name = (prof.get("bank_name") or "").strip()
-            b_acc = (prof.get("bank_acc") or "").strip()
-            
-            me_note = " (⚠️ รายการที่คุณต้องโอน)" if debtor_name == st.session_state["current_online_user"] else ""
-            st.markdown(f"💳 **{debtor_name}** โอนให้ 👉 **{credential_name}** จำนวน **{amt:,.2f}** บาท **{me_note}**")
-            
-            if pp or b_acc:
-                col_pp, col_bank = st.columns(2)
-                with col_pp:
-                    if pp:
-                        st.caption(f"📱 พร้อมเพย์ {credential_name}")
-                        st.code(pp, language="text")
-                with col_bank:
-                    if b_acc:
-                        label = f"🏦 {b_name}" if b_name else "🏦 เลขบัญชี"
-                        st.caption(f"{label} ของ {credential_name}")
-                        st.code(b_acc, language="text")
-            else:
-                st.warning(f"⚠️ {credential_name} ยังไม่ได้บันทึกข้อมูลรายละเอียดเลขบัญชีในหน้าโปรไฟล์ส่วนตัว")
-            
-            st.write("---")
-            final_tx.append((debtor_name, credential_name, amt))
-            debtors[0][1] += amt; creditors[0][1] -= amt
-            if abs(debtors[0][1]) < 0.01: debtors.pop(0)
-            if abs(creditors[0][1]) < 0.01: creditors.pop(0)
-
-        # ================= ส่วนระบบส่งข้อมูลเข้า LINE =================
-        st.subheader("📲 ส่งสรุปยอดเข้า LINE")
+            # คนจ่ายเงินล่วงหน้าจะได้เงินคืนสะสม (บวกเข้า)
+            if p_name in balances:
+                balances[p_name] += total_amt
+                
+            # ทุกคนในกลุ่มหารมีหน้าที่รับผิดชอบติดลบ (หักออก)
+            for member in split_list:
+                if member in balances:
+                    balances[member] -= share_cost
+                    
+        # 2. คัดแยกคนที่เป็นหนี้ (Debtors) และ เจ้าหนี้ (Creditors)
+        # เคลียร์เศษปัดเศษจุดทศนิยม 0.01 เพื่อป้องกัน Bug ตัวเลขจากฐานข้อมูล
+        debtors = sorted([[n, b] for n, b in balances.items() if b < -0.01], key=lambda x: x[1])
+        creditors = sorted([[n, b] for n, b in balances.items() if b > 0.01], key=lambda x: x[1], reverse=True)
         
-        line_msg = f"📊 สรุปยอดค่าใช้จ่ายทริป: {current_trip}\n"
-        if has_valid_date:
-            line_msg += f"📅 วันที่: {current_trip_date}\n"
-        line_msg += "-------------------------------\n"
-        for d_n, c_n, a_m in final_tx:
-            line_msg += f"💳 {d_n} โอนให้ 👉 {c_n} = {a_m:,.2f} บาท\n"
-            prof = user_profiles.get(c_n, {})
-            pp = (prof.get("promptpay") or "").strip()
-            if pp:
-                line_msg += f"   (📱 พร้อมเพย์: {pp})\n"
-        line_msg += "-------------------------------"
+        # 3. แสดงแดชบอร์ดยอดสุทธิของแต่ละคนก่อน
+        st.subheader("📊 ตารางสรุปสถานะกระเป๋าเงินสมาชิก")
+        col_view = st.columns(len(balances))
+        for idx, (name, val) in enumerate(balances.items()):
+            with col_view[idx]:
+                if val >= 0:
+                    st.metric(label=f"🟢 {name} (ได้คืน)", value=f"+{val:,.2f} ฿")
+                else:
+                    st.metric(label=f"🔴 {name} (ต้องจ่าย)", value=f"{val:,.2f} ฿")
+                    
+        st.markdown("---")
+        st.subheader("🤝 วิธีจับคู่โอนเคลียร์เงินที่ง่ายที่สุด")
         
-        st.text_area("📋 ข้อความที่จะส่งเข้า LINE:", value=line_msg, height=150, disabled=True)
-        
-        encoded_msg = urllib.parse.quote(line_msg)
-        line_url = f"https://line.me/R/msg/text/?{encoded_msg}"
-        
-        st.link_button("🟢 แชร์สรุปยอดเข้าแอป LINE", line_url, type="primary", use_container_width=True)
+        if not debtors and not creditors:
+            st.success("🎉 บัญชีทริปนี้สมดุลแล้ว! สมาชิกทุกคนเคลียร์ยอดค้างชำระครบถ้วนเรียบร้อย")
+        else:
+            # วนลูปจับคู่เพื่อหาว่าใครควรโอนให้ใครเป็นจำนวนเท่าไหร่
+            for d_name, d_amt in debtors:
+                d_amt_abs = abs(d_amt)
+                
+                for c_item in creditors:
+                    if d_amt_abs <= 0.01: 
+                        break
+                    if c_item[1] <= 0.01: 
+                        continue
+                        
+                    settle_amt = min(d_amt_abs, c_item[1])
+                    
+                    # แสดงกล่องสรุปการจ่ายเงิน
+                    with st.container(border=True):
+                        st.markdown(f"💸 **{d_name}** ต้องโอนเงินให้ ➡️ **{c_item['0'] if isinstance(c_item, dict) else c_item[0]}**")
+                        st.markdown(f"<h3>ยอดโอน: <span style='color:#FF4B4B;'>{settle_amt:,.2f}</span> บาท</h3>", unsafe_allow_html=True)
+                        
+                        # ดึงข้อมูลช่องทางชำระเงินของเจ้าหนี้คนนั้นขึ้นมาแสดงอำนวยความสะดวก
+                        c_name = c_item['0'] if isinstance(c_item, dict) else c_item[0]
+                        acc_info = conn.execute("SELECT * FROM all_users WHERE name = ?", (c_name,)).fetchone()
+                        
+                        if acc_info:
+                            cc1, cc2 = st.columns(2)
+                            if acc_info['promptpay']:
+                                cc1.code(f"📱 พร้อมเพย์: {acc_info['promptpay']}", language=None)
+                            if acc_info['bank_account']:
+                                cc2.code(f"🏦 บัญชี: {acc_info['bank_name']}\nเลขที่: {acc_info['bank_account']}", language=None)
+                            if not acc_info['promptpay'] and not acc_info['bank_account']:
+                                st.caption("⚠️ เพื่อนคนนี้ยังไม่ได้ลงข้อมูลบัญชีธนาคารไว้ในระบบส่วนตัวซ้ายมือ")
+                    
+                    # อัปเดตตัวเลขหลังจับคู่หักลบ
+                    d_amt_abs -= settle_amt
+                    c_item[1] -= settle_amt
+    conn.close()

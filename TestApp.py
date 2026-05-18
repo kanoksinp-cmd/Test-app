@@ -196,9 +196,9 @@ online_users = get_currently_online_users()
 if online_users:
     for o_user in online_users:
         if o_user == st.session_state["current_online_user"]:
-            st.sidebar.markdown(f"🌟 **{o_user}** *(เครื่องคุณ)*")
+            st.sidebar.markdown(f"🌟 **{o_user}** *(คุณ)*")
         else:
-            st.sidebar.markdown(f"🟢 **{o_user}** *(เครื่องอื่น)*")
+            st.sidebar.markdown(f"🟢 **{o_user}** *(คนอื่น)*")
 else:
     st.sidebar.caption("ไม่มีผู้ใช้งานอื่นออนไลน์")
 st.sidebar.markdown("---")
@@ -334,7 +334,7 @@ if existing_members:
             st.rerun()
 
 selected_u = st.sidebar.selectbox("ชวนเพื่อนออนไลน์เข้าร่วมบิล:", ["-- เลือกเพื่อน --"] + available_users)
-if st.sidebar.button("ดึงเพื่อนเข้ากลุ่ม"):
+if st.sidebar.button("ดึงเข้ากลุ่ม"):
     if selected_u != "-- เลือกเพื่อน --":
         conn.execute("INSERT INTO members (trip_id, name) VALUES (?, ?)", (trip_id, selected_u))
         conn.commit()

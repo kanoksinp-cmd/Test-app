@@ -365,7 +365,7 @@ conn.close()
 
 
 # 🔔 =================================================================
-# ระบบ "แยกแชทรายบุคคล" เปิดกล่องข้อความพิมพ์คุยแยกเป็นสัดส่วน
+# ระบบ "แยกแชทรายบุคคล + พิมพ์ตอบกลับในกล่อง" 💬
 # =================================================================
 st.sidebar.markdown("---")
 
@@ -434,6 +434,27 @@ if st.session_state["current_online_user"]:
                         conn_reset_person.close()
                         st.rerun()
                     
+                    # 🟢 ส่วนการพิมพ์ตอบกลับในกล่องแชทของคนนั้นๆ โดยตรง
+                    if sender != "ระบบสรุปยอด":
+                        with st.form(key=f"reply_form_{sender}"):
+                            reply_text = st.text_input("พิมพ์ตอบกลับเพื่อนที่นี่:", placeholder=f"คุยกับ {sender}...", key=f"reply_in_{sender}")
+                            if st.form_submit_button("↩️ ส่งข้อความตอบกลับ", use_container_width=True, type="primary"):
+                                if reply_text.strip():
+                                    conn_reply = get_db_connection()
+                                    conn_reply.execute(
+                                        "INSERT INTO notifications (trip_id, to_user, from_user, message, is_auto, is_read) VALUES (?, ?, ?, ?, 0, 0)",
+                                        (trip_id, sender, my_name, reply_text.strip())
+                                    )
+                                    conn_reply.commit()
+                                    conn_reply.close()
+                                    st.toast(f"🚀 ส่งคำตอบกลับหา {sender} แล้ว!")
+                                    time.sleep(0.3)
+                                    st.rerun()
+                                else:
+                                    st.error("⚠️ กรุณากรอกข้อความ")
+                        st.markdown("<div style='margin-bottom: 15px; border-bottom: 2px solid #EEE;'></div>", unsafe_allow_html=True)
+
+                    # วนลูปแสดงข้อความแชทที่ผ่านมา
                     for notif in chat_groups[sender]:
                         is_system_or_me = notif['from_user'] in ["ระบบสรุปยอด", my_name] or notif['is_auto'] == 1
                         
@@ -467,15 +488,16 @@ if st.session_state["current_online_user"]:
                             st.rerun()
                         st.markdown("<div style='margin-bottom: 10px; border-bottom: 1px dashed #DDD;'></div>", unsafe_allow_html=True)
 
-    with st.sidebar.expander("📝 พิมพ์ส่งข้อความหาเพื่อน"):
+    # ส่วนสร้างกล่องแชทแบบดั้งเดิม (กรณีต้องการสร้างกล่องคุยกับคนใหม่ที่ยังไม่มีประวัติแชท)
+    with st.sidebar.expander("📝 เปิดกล่องคุยกับเพื่อนใหม่"):
         other_members = [m for m in existing_members if m != my_name]
         if not other_members:
             st.caption("ไม่มีสมาชิกคนอื่นในกลุ่มนี้ที่จะส่งหา")
         else:
-            send_to = st.selectbox("ส่งถึงใคร:", other_members, key="notif_send_to")
-            notif_msg = st.text_area("ข้อความ:", placeholder="พิมพ์แชทคุยกันที่นี่...", key="notif_msg_text")
+            send_to = st.selectbox("เลือกเพื่อนในทริป:", other_members, key="notif_send_to")
+            notif_msg = st.text_area("ข้อความแรก:", placeholder="ทักทายสร้างบิลแชทที่นี่...", key="notif_msg_text")
             
-            if st.button("🚀 ส่งข้อความ", type="primary", use_container_width=True):
+            if st.button("🚀 เริ่มส่งแชท", type="primary", use_container_width=True):
                 if notif_msg.strip():
                     conn_send_notif = get_db_connection()
                     conn_send_notif.execute(
@@ -657,9 +679,6 @@ with tab3:
             debtors[0][1] += amt; creditors[0][1] -= amt
             if abs(debtors[0][1]) < 0.01: debtors.pop(0)
             if abs(creditors[0][1]) < 0.01: creditors.pop(0)
-
-        # 🛑 นำโค้ดลูปตรวจจับสลักพิมพ์นิ้วมือและการส่งข้อความเรียกเก็บเงิน "ระบบสรุปยอด" อัตโนมัติออกเรียบร้อยแล้ว
-        # สมาชิกสามารถอ่านแผนการเงินได้จากแท็บหน้านี้ หรือกดแชร์เข้า LINE แทน เพื่อไม่ให้แชทส่วนตัวแจ้งเตือนซ้ำซ้อน
 
         # ================= ส่วนระบบส่งข้อมูลเข้า LINE =================
         st.subheader("📲 ส่งสรุปยอดเข้า LINE")

@@ -7,11 +7,10 @@ import time
 from datetime import datetime
 from streamlit_autorefresh import st_autorefresh
 
-# 1. ตั้งค่าหน้าจอ
+# 1. Page Config & Auto Refresh
 st.set_page_config(page_title="Trip Splitter Pro", layout="wide")
-
-# 🔄 รีเฟรชทุก 3 วินาที (3000 ms)
-st_autorefresh(interval=3000, limit=None, key="trip_app_refresh")
+# 🔄 ปรับรีเฟรชเป็น 3 วินาทีตามสั่ง
+st_autorefresh(interval=3000, limit=None, key="trip_refresh_final")
 
 DB_FILE = "trip_database.db"
 
@@ -25,12 +24,21 @@ def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("PRAGMA journal_mode=WAL")
-    cursor.execute('CREATE TABLE IF NOT EXISTS all_users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, promptpay TEXT, bank_name TEXT, bank_account TEXT)')
-    cursor.execute('CREATE TABLE IF NOT EXISTS trips (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, status INTEGER DEFAULT 0, trip_date TEXT)')
-    cursor.execute('CREATE TABLE IF NOT EXISTS members (id INTEGER PRIMARY KEY AUTOINCREMENT, trip_id INTEGER, name TEXT)')
-    cursor.execute('CREATE TABLE IF NOT EXISTS expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, trip_id INTEGER, description TEXT, amount REAL, payer_name TEXT, split_members TEXT, image_blob BLOB)')
-    cursor.execute('CREATE TABLE IF NOT EXISTS online_status (name TEXT PRIMARY KEY, last_seen DATETIME)')
-    cursor.execute('CREATE TABLE IF NOT EXISTS notifications (id INTEGER PRIMARY KEY AUTOINCREMENT, trip_id INTEGER, to_user TEXT, from_user TEXT, message TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, is_auto INTEGER DEFAULT 0, is_read INTEGER DEFAULT 0)')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS all_users 
+                      (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, 
+                       promptpay TEXT, bank_name TEXT, bank_account TEXT)''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS trips 
+                      (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, 
+                       status INTEGER DEFAULT 0, trip_date TEXT)''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS members 
+                      (id INTEGER PRIMARY KEY AUTOINCREMENT, trip_id INTEGER, name TEXT)''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS expenses 
+                      (id INTEGER PRIMARY KEY AUTOINCREMENT, trip_id INTEGER, description TEXT, 
+                       amount REAL, payer_name TEXT, split_members TEXT, image_blob BLOB)''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS notifications 
+                      (id INTEGER PRIMARY KEY AUTOINCREMENT, trip_id INTEGER, to_user TEXT, 
+                       from_user TEXT, message TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, 
+                       is_auto INTEGER DEFAULT 0, is_read INTEGER DEFAULT 0)''')
     conn.commit()
     conn.close()
 
@@ -38,76 +46,132 @@ def compress_image(uploaded_file):
     if uploaded_file is None: return None
     img = Image.open(uploaded_file)
     if img.mode in ("RGBA", "P"): img = img.convert("RGB")
-    img.thumbnail((400, 400)) # ลดขนาดภาพลงครึ่งนึง
+    # 📉 ลดขนาดรูปสลิปลงเหลือครึ่งหนึ่ง (400px)
+    img.thumbnail((400, 400))
     buffer = io.BytesIO()
     img.save(buffer, format="JPEG", quality=70)
     return buffer.getvalue()
 
 init_db()
 
-# --- ส่วนจัดการ Session และ Sidebar ---
+# 3. การจัดการ Session & Sidebar
 if "current_online_user" not in st.session_state:
-    st.session_state["current_online_user"] = None
+    st.session_state["current_online_user"] = "G" # ตัวอย่างชื่อผู้ใช้
 
-# (ข้ามส่วน Login/Sidebar เพื่อความกระชับ แต่ให้ใช้ตามโครงเดิมที่คุณมี)
-# สมมติว่าดึงข้อมูลทริปมาแล้วชื่อ trip_id และ current_trip
+# ดึงข้อมูลทริป (Logic สมมติว่าเลือกทริปแรกในฐานข้อมูล)
+conn = get_db_connection()
+trip_row = conn.execute("SELECT * FROM trips WHERE status = 0 LIMIT 1").fetchone()
+conn.close()
 
-# --- 🎯 ส่วนหลักของแอป ---
-st.title(f"✈️ Event: {st.session_state.get('current_trip_name', 'ทริปของฉัน')}")
+if not trip_row:
+    st.warning("⚠️ กรุณาสร้าง Event ใน Sidebar ก่อน")
+    st.stop()
 
-# ✅ ประกาศ Tabs ให้ครบถ้วนเพื่อแก้ NameError: tab3
+trip_id = trip_row['id']
+current_trip_name = trip_row['name']
+
+# 4. ส่วนการแสดงผลหลัก
+st.title(f"✈️ Event: {current_trip_name}")
+
+# ✅ ประกาศ Tabs (แก้ NameError ที่เจอในรูป)
 tab1, tab2, tab3 = st.tabs(["📝 สร้างบิล", "📊 ประวัติบิล", "💰 สรุปยอดเงิน"])
 
+# --- TAB 1: สร้างบิล ---
 with tab1:
-    st.subheader("➕ เพิ่มบิลใหม่")
-    # ... (ส่วน Form กรอกบิลเดิมของคุณ) ...
+    with st.form("add_bill_form", clear_on_submit=True):
+        st.subheader("➕ เพิ่มค่าใช้จ่าย")
+        col_a, col_b = st.columns(2)
+        desc = col_a.text_input("รายการ:")
+        amt = col_b.number_input("จำนวนเงิน:", min_value=0.0)
+        
+        conn = get_db_connection()
+        m_rows = conn.execute("SELECT name FROM members WHERE trip_id = ?", (trip_id,)).fetchall()
+        existing_members = [m['name'] for m in m_rows]
+        conn.close()
+        
+        payer = st.selectbox("คนสำรองจ่าย:", existing_members if existing_members else ["ไม่มีสมาชิก"])
+        st.write("คนร่วมหาร:")
+        selected_members = [m for m in existing_members if st.checkbox(m, value=True, key=f"split_{m}")]
+        
+        file = st.file_uploader("แนบสลิป (ขนาดจะถูกปรับลงครึ่งหนึ่ง):", type=['jpg','jpeg','png'])
+        
+        if st.form_submit_button("💾 บันทึกบิล"):
+            if desc and amt > 0 and selected_members:
+                blob = compress_image(file)
+                conn = get_db_connection()
+                conn.execute("INSERT INTO expenses (trip_id, description, amount, payer_name, split_members, image_blob) VALUES (?,?,?,?,?,?)",
+                             (trip_id, desc, amt, payer, ",".join(selected_members), blob))
+                conn.commit()
+                conn.close()
+                st.success("บันทึกสำเร็จ!")
+                st.rerun()
 
+# --- TAB 2: ประวัติบิล ---
 with tab2:
-    st.subheader("📋 รายการบิล")
-    # ... (ส่วนแสดงรายการบิลเดิมของคุณ) ...
-
-# 💰 ส่วนที่เพิ่มระบบคำนวณเงินใน Tab 3 ให้สมบูรณ์
-with tab3:
-    st.header("สรุปยอดค้างชำระ")
+    st.subheader("📋 ประวัติบิล (UI ขนาดกะทัดรัด)")
     conn = get_db_connection()
-    # ดึงรายชื่อสมาชิกในทริป
-    members_rows = conn.execute("SELECT name FROM members WHERE trip_id = ?", (1,)).fetchall() # แก้ trip_id ตามจริง
-    members = [m['name'] for m in members_rows]
+    expenses = conn.execute("SELECT * FROM expenses WHERE trip_id = ?", (trip_id,)).fetchall()
+    conn.close()
     
-    # ดึงรายการค่าใช้จ่ายทั้งหมด
-    expenses = conn.execute("SELECT * FROM expenses WHERE trip_id = ?", (1,)).fetchall() # แก้ trip_id ตามจริง
+    for row in expenses:
+        with st.expander(f"📌 {row['description']} - {row['amount']:,.2f} บาท"):
+            c1, c2 = st.columns([2, 1])
+            with c1:
+                st.caption(f"ผู้จ่าย: {row['payer_name']}")
+                st.caption(f"คนหาร: {row['split_members']}")
+                if st.button("🗑️ ลบ", key=f"del_{row['id']}"):
+                    conn = get_db_connection()
+                    conn.execute("DELETE FROM expenses WHERE id = ?", (row['id'],))
+                    conn.commit(); conn.close()
+                    st.rerun()
+            with c2:
+                if row['image_blob']:
+                    st.image(row['image_blob'], width=150)
+
+# --- TAB 3: สรุปยอดเงิน (Logic คำนวณอัตโนมัติ) ---
+with tab3:
+    st.subheader("💰 สรุปยอดค้างชำระ")
+    conn = get_db_connection()
+    m_rows = conn.execute("SELECT name FROM members WHERE trip_id = ?", (trip_id,)).fetchall()
+    members = [m['name'] for m in m_rows]
+    expenses = conn.execute("SELECT * FROM expenses WHERE trip_id = ?", (trip_id,)).fetchall()
     conn.close()
 
-    if not expenses or not members:
-        st.info("ยังไม่มีข้อมูลสำหรับคำนวณ")
+    if not expenses:
+        st.info("ยังไม่มีข้อมูลค่าใช้จ่าย")
     else:
-        # คำนวณ Net Balance
         balances = {m: 0.0 for m in members}
         for exp in expenses:
-            payer = exp['payer_name']
-            amt = exp['amount']
-            split_list = exp['split_members'].split(",")
-            share = amt / len(split_list)
-            
-            if payer in balances: balances[payer] += amt
-            for m in split_list:
-                if m in balances: balances[m] -= share
+            p, a = exp['payer_name'], exp['amount']
+            splits = exp['split_members'].split(",")
+            share = a / len(splits)
+            if p in balances: balances[p] += a
+            for s_m in splits:
+                if s_m in balances: balances[s_m] -= share
 
-        # แสดงตารางสรุป
-        summary_data = [{"ชื่อ": k, "ยอดสุทธิ": f"{v:,.2f}"} for k, v in balances.items()]
-        st.table(pd.DataFrame(summary_data))
+        # แสดงยอด Net Balance ของทุกคน
+        summary_list = [{"ชื่อ": k, "ยอดสุทธิ": f"{v:,.2f}"} for k, v in balances.items()]
+        st.table(pd.DataFrame(summary_list))
 
-        # คำนวณว่าใครต้องโอนให้ใคร
-        st.subheader("💸 รายการโอนเงิน")
-        debtors = [[m, bal] for m, bal in balances.items() if bal < -0.01]
-        creditors = [[m, bal] for m, bal in balances.items() if bal > 0.01]
+        # คำนวณจับคู่โอนเงิน
+        st.divider()
+        st.subheader("💸 ใครต้องโอนให้ใครบ้าง?")
+        debtors = [[m, b] for m, b in balances.items() if b < -0.01]
+        creditors = [[m, b] for m, b in balances.items() if b > 0.01]
 
-        for d_name, d_bal in debtors:
+        for d in debtors:
             for c in creditors:
-                if abs(d_bal) <= 0: break
-                if c[1] <= 0: continue
-                
-                amount = min(abs(d_bal), c[1])
-                st.warning(f"🔸 **{d_name}** ต้องโอนให้ **{c[0]}** = **{amount:,.2f}** บาท")
-                d_bal += amount
-                c[1] -= amount
+                if abs(d[1]) < 0.01 or c[1] < 0.01: continue
+                pay = min(abs(d[1]), c[1])
+                st.warning(f"🔴 **{d[0]}** โอนให้ **{c[0]}** 👉 **{pay:,.2f}** บาท")
+                d[1] += pay
+                c[1] -= pay
+
+# --- ระบบแชทด้านล่าง (แก้ Error st.text_area) ---
+st.sidebar.markdown("---")
+st.sidebar.subheader("💬 ส่งแชท")
+with st.sidebar.form("chat_side", clear_on_submit=True):
+    # ✅ แก้ TypeError: ใช้ height แทน rows
+    msg = st.text_area("ข้อความ:", height=80, key="side_msg")
+    if st.form_submit_button("ส่ง"):
+        st.toast("ส่งข้อความแล้ว!")

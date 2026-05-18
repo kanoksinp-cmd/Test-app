@@ -46,8 +46,21 @@ def init_db():
     cursor.execute('CREATE TABLE IF NOT EXISTS expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, trip_id INTEGER, description TEXT, amount REAL, payer_name TEXT, split_members TEXT, image_blob BLOB, FOREIGN KEY(trip_id) REFERENCES trips(id))')
     cursor.execute('CREATE TABLE IF NOT EXISTS settlements (id INTEGER PRIMARY KEY AUTOINCREMENT, trip_id INTEGER, debtor TEXT, creditor TEXT, amount REAL, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(trip_id) REFERENCES trips(id))')
     
-    # 🟢 ตารางสำหรับระบบออนไลน์ร่วมกัน
+    # 🌐 ตารางสำหรับระบบออนไลน์ร่วมกัน
     cursor.execute('CREATE TABLE IF NOT EXISTS online_status (name TEXT PRIMARY KEY, last_seen DATETIME)')
+
+    # 🔔 ตารางสำหรับระบบข้อความแจ้งเตือนเรียกเก็บเงิน
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS notifications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, 
+            trip_id INTEGER, 
+            to_user TEXT, 
+            from_user TEXT, 
+            message TEXT, 
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(trip_id) REFERENCES trips(id)
+        )
+    ''')
 
     # ตรวจสอบและอัปเดตคอลัมน์ผู้ใช้งาน
     cursor.execute("PRAGMA table_info(all_users)")
@@ -329,6 +342,68 @@ if st.sidebar.button("ดึงเพื่อนเข้ากลุ่ม"):
         time.sleep(1)
         st.rerun()
 conn.close()
+
+
+# 🔔 =================================================================
+# 🟢 เพิ่มส่วนระบบ "ข้อความแจ้งเตือนเรียกเก็บเงิน" ไว้ใน Sidebar
+# =================================================================
+st.sidebar.markdown("---")
+st.sidebar.header("🔔 ข้อความแจ้งเตือน")
+
+if st.session_state["current_online_user"]:
+    my_name = st.session_state["current_online_user"]
+    
+    # ดึงข้อความแจ้งเตือนที่มีคนส่งถึงโปรไฟล์เราภายใน Event นี้
+    conn_notif = get_db_connection()
+    my_notifs = conn_notif.execute(
+        "SELECT * FROM notifications WHERE trip_id = ? AND to_user = ? ORDER BY id DESC", 
+        (trip_id, my_name)
+    ).fetchall()
+    conn_notif.close()
+    
+    # กล่องรับข้อความแจ้งเตือนที่ส่งถึงเรา
+    with st.sidebar.expander(f"📥 กล่องข้อความของคุณ ({len(my_notifs)})", expanded=True):
+        if not my_notifs:
+            st.caption("ไม่มีข้อความเรียกเก็บเงินใหม่")
+        else:
+            for notif in my_notifs:
+                st.info(f"✍️ **จาก:** {notif['from_user']}\n\n{notif['message']}")
+                if st.button("🗑️ ลบ", key=f"del_notif_{notif['id']}", type="secondary", use_container_width=True):
+                    conn_del_notif = get_db_connection()
+                    conn_del_notif.execute("DELETE FROM notifications WHERE id = ?", (notif['id'],))
+                    conn_del_notif.commit()
+                    conn_del_notif.close()
+                    st.toast("ลบข้อความแจ้งเตือนเรียบร้อย")
+                    time.sleep(0.5)
+                    st.rerun()
+
+    # ฟอร์มเขียนข้อความเพื่อส่งหาเพื่อนในกลุ่ม
+    with st.sidebar.expander("📝 ส่งข้อความเรียกเก็บเงิน"):
+        other_members = [m for m in existing_members if m != my_name]
+        if not other_members:
+            st.caption("ไม่มีสมาชิกคนอื่นในกลุ่มนี้ที่จะส่งหา")
+        else:
+            send_to = st.selectbox("ส่งถึงใคร:", other_members, key="notif_send_to")
+            notif_msg = st.text_area("ข้อความเรียกเก็บเงิน:", placeholder="เช่น: ค่าบุฟเฟต์สุกี้เมื่อกี้คนละ 320 บาทน้า...", key="notif_msg_text")
+            
+            if st.button("🚀 ส่งข้อความ", type="primary", use_container_width=True):
+                if notif_msg.strip():
+                    conn_send_notif = get_db_connection()
+                    conn_send_notif.execute(
+                        "INSERT INTO notifications (trip_id, to_user, from_user, message) VALUES (?, ?, ?, ?)",
+                        (trip_id, send_to, my_name, notif_msg.strip())
+                    )
+                    conn_send_notif.commit()
+                    conn_send_notif.close()
+                    st.toast(f"🚀 ส่งข้อความเรียกเก็บเงินถึง {send_to} แล้ว!")
+                    time.sleep(0.5)
+                    st.rerun()
+                else:
+                    st.error("⚠️ กรุณากรอกข้อความก่อนส่ง")
+else:
+    st.sidebar.caption("กรุณาเข้าสู่ระบบเพื่อใช้งานระบบแจ้งเตือน")
+# ====================================================================
+
 
 # --- 5. พื้นที่ทำงานหลัก (Main UI Display) ---
 has_valid_date = current_trip_date and str(current_trip_date).strip() and not pd.isna(current_trip_date)

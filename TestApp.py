@@ -367,7 +367,7 @@ conn.close()
 
 
 # 🔔 =================================================================
-# ระบบ "แชทแยกรายบุคคล (แสดงสองฝั่งโต้ตอบกัน + แจ้งเวลาส่ง)" 💬
+# ระบบ "แชทแยกรายบุคคล (แสดงสองฝั่งโต้ตอบกัน + แจ้งเวลาส่ง + กล่องพิมพ์อยู่ล่างสุด)" 💬
 # =================================================================
 st.sidebar.markdown("---")
 
@@ -389,7 +389,7 @@ else:
 if st.session_state["current_online_user"]:
     my_name = st.session_state["current_online_user"]
     
-    # 🔄 โหลดข้อความทั้งหมดที่เกี่ยวข้องกับตัวเรา (ทั้งคนอื่นส่งหาเรา และเราส่งหาคนอื่น) เพื่อคุยแบบ Two-way
+    # 🔄 โหลดข้อความทั้งหมดที่เกี่ยวข้องกับตัวเรา
     conn_notif = get_db_connection()
     all_chat_rows = conn_notif.execute(
         "SELECT * FROM notifications WHERE trip_id = ? AND (to_user = ? OR from_user = ?) ORDER BY timestamp ASC, id ASC", 
@@ -402,16 +402,13 @@ if st.session_state["current_online_user"]:
     unread_status = {}
     
     for n in all_chat_rows:
-        # ระบุว่าคู่สนทนาในแถวนี้คือใคร
         partner = n['from_user'] if n['to_user'] == my_name else n['to_user']
-        
         if partner not in chat_groups:
             chat_groups[partner] = []
             unread_status[partner] = 0
             
         chat_groups[partner].append(n)
         
-        # นับจำนวน unread เฉพาะข้อความที่ "คนอื่นส่งหาเรา" เท่านั้น
         if n['to_user'] == my_name and n['is_read'] == 0:
             unread_status[partner] += 1
 
@@ -444,47 +441,21 @@ if st.session_state["current_online_user"]:
                         conn_reset_person.close()
                         st.rerun()
                     
-                    # ส่วนกล่องพิมพ์ข้อความตอบกลับ
-                    if partner != "ระบบสรุปยอด":
-                        with st.form(key=f"reply_form_{partner}", clear_on_submit=True):
-                            reply_key = f"reply_in_{partner}"
-                            reply_text = st.text_input("พิมพ์ตอบกลับเพื่อนที่นี่:", placeholder=f"คุยกับ {partner}...", key=reply_key)
-                            
-                            if st.form_submit_button("↩️ ส่งข้อความตอบกลับ", use_container_width=True, type="primary"):
-                                if reply_text.strip():
-                                    conn_reply = get_db_connection()
-                                    # บันทึกเวลาปัจจุบันลงฐานข้อมูลผ่าน datetime('now', 'localtime')
-                                    conn_reply.execute(
-                                        "INSERT INTO notifications (trip_id, to_user, from_user, message, is_auto, is_read, timestamp) VALUES (?, ?, ?, ?, 0, 0, datetime('now', 'localtime'))",
-                                        (trip_id, partner, my_name, reply_text.strip())
-                                    )
-                                    conn_reply.commit()
-                                    conn_reply.close()
-                                    
-                                    st.toast(f"🚀 ส่งคำตอบกลับหา {partner} แล้ว!")
-                                    time.sleep(0.3)
-                                    st.rerun()
-                                else:
-                                    st.error("⚠️ กรุณากรอกข้อความ")
-                        st.markdown("<div style='margin-bottom: 15px; border-bottom: 2px solid #EEE;'></div>", unsafe_allow_html=True)
-
-                    # วนลูปแสดงข้อความแชทโต้ตอบ (เรียงตามเวลาจากเก่าไปใหม่ลงมา)
+                    # 1. 💬 [ส่วนบน] แสดงข้อความแชทโต้ตอบก่อน (เก่าไปใหม่)
                     for notif in chat_groups[partner]:
-                        # ดึงเวลา และจัดฟอร์แมตให้อ่านง่าย (ชั่วโมง:นาที)
                         time_str = ""
                         if notif['timestamp']:
                             try:
                                 dt_obj = datetime.strptime(notif['timestamp'], "%Y-%m-%d %H:%M:%S")
                                 time_str = dt_obj.strftime("%H:%M")
                             except:
-                                time_str = str(notif['timestamp'])[11:16] # ตัดเอาค่า HH:MM ดิบๆ
+                                time_str = str(notif['timestamp'])[11:16]
                         
-                        # แยกฝั่งการจัดวาง HTML: ขวาคือตัวเรา/ระบบ , ซ้ายคือข้อความที่เพื่อนส่งมา
                         is_my_own_msg = (notif['from_user'] == my_name)
                         is_system = (notif['from_user'] == "ระบบสรุปยอด" or notif['is_auto'] == 1)
                         
                         if is_my_own_msg:
-                            # 🟢 ข้อความฝั่งขวา (ฝั่งตัวเราเองเป็นคนส่ง)
+                            # 🟢 ข้อความฝั่งขวา (ฝั่งตัวเราเอง)
                             chat_html = f'''
                             <div style="display: flex; flex-direction: column; align-items: flex-end; margin-bottom: 10px; width: 100%;">
                                 <div style="display: flex; align-items: flex-end;">
@@ -496,7 +467,7 @@ if st.session_state["current_online_user"]:
                             </div>
                             '''
                         elif is_system:
-                            # 🤖 ข้อความฝั่งขวา (แต่ระบุชื่อหัวเป็นระบบอัตโนมัติ)
+                            # 🤖 ข้อความฝั่งขวา (ระบบอัตโนมัติ)
                             chat_html = f'''
                             <div style="display: flex; flex-direction: column; align-items: flex-end; margin-bottom: 10px; width: 100%;">
                                 <span style="font-size: 11px; color: #888; margin-right: 5px;">🤖 {notif['from_user']}</span>
@@ -509,7 +480,7 @@ if st.session_state["current_online_user"]:
                             </div>
                             '''
                         else:
-                            # ⚪ ข้อความฝั่งซ้าย (ฝั่งเพื่อนส่งเข้ามาหาเรา)
+                            # ⚪ ข้อความฝั่งซ้าย (ฝั่งเพื่อนส่งมา)
                             chat_html = f'''
                             <div style="display: flex; flex-direction: column; align-items: flex-start; margin-bottom: 10px; width: 100%;">
                                 <span style="font-size: 11px; color: #888; margin-left: 5px;">👤 {notif['from_user']}</span>
@@ -523,7 +494,7 @@ if st.session_state["current_online_user"]:
                             '''
                         st.markdown(chat_html, unsafe_allow_html=True)
                         
-                        # ปุ่มลบประวัติเฉพาะข้อความนั้นๆ
+                        # ปุ่มลบประวัติข้อความ
                         if st.button("🗑️ ลบ", key=f"del_notif_{notif['id']}", type="secondary", help="ลบข้อความนี้ออกจากบันทึก"):
                             conn_del_notif = get_db_connection()
                             conn_del_notif.execute("DELETE FROM notifications WHERE id = ?", (notif['id'],))
@@ -533,6 +504,29 @@ if st.session_state["current_online_user"]:
                             time.sleep(0.3)
                             st.rerun()
                         st.markdown("<div style='margin-bottom: 10px; border-bottom: 1px dashed #EEE;'></div>", unsafe_allow_html=True)
+
+                    # 2. 📝 [ส่วนล่างสุด] กล่องสำหรับเขียนข้อความและปุ่มกดส่ง
+                    if partner != "ระบบสรุปยอด":
+                        st.markdown("<div style='margin-top: 15px; margin-bottom: 5px; border-top: 2px solid #EEE;'></div>", unsafe_allow_html=True)
+                        with st.form(key=f"reply_form_{partner}", clear_on_submit=True):
+                            reply_key = f"reply_in_{partner}"
+                            reply_text = st.text_input("พิมพ์ตอบกลับเพื่อนที่นี่:", placeholder=f"คุยกับ {partner}...", key=reply_key)
+                            
+                            if st.form_submit_button("↩️ ส่งข้อความตอบกลับ", use_container_width=True, type="primary"):
+                                if reply_text.strip():
+                                    conn_reply = get_db_connection()
+                                    conn_reply.execute(
+                                        "INSERT INTO notifications (trip_id, to_user, from_user, message, is_auto, is_read, timestamp) VALUES (?, ?, ?, ?, 0, 0, datetime('now', 'localtime'))",
+                                        (trip_id, partner, my_name, reply_text.strip())
+                                    )
+                                    conn_reply.commit()
+                                    conn_reply.close()
+                                    
+                                    st.toast(f"🚀 ส่งคำตอบกลับหา {partner} แล้ว!")
+                                    time.sleep(0.3)
+                                    st.rerun()
+                                else:
+                                    st.error("⚠️ กรุณากรอกข้อความ")
 
     # ส่วนเปิดกล่องทักทายหาเพื่อนคนใหม่
     with st.sidebar.expander("📝 เปิดกล่องคุยกับเพื่อนใหม่"):
@@ -571,7 +565,7 @@ has_valid_date = current_trip_date and str(current_trip_date).strip() and not pd
 
 if st.session_state["current_online_user"] is None:
     st.title("🛄 กรุณาระบุข้อมูลผู้ใช้งานเครื่องนี้ก่อน")
-    st.info("กรุณาเลือกโปรไฟล์ของคุณหรือสร้างผู้ใช้ใหม่ที่เมนูด้านซ้ายบน เพื่อเริ่มเปิดดูสถิติและลงรายการบิล")
+    st.info("กรุณาเลือกโปรไฟล์ของคุณหรือสร้างผู้ใช้ใหม่ที่แถบซ้ายบน เพื่อเริ่มเปิดดูสถิติและลงรายการบิล")
     st.stop()
 
 if not existing_members:

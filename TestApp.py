@@ -33,11 +33,10 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT, trip_id INTEGER, to_user TEXT, from_user TEXT, message TEXT, 
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, is_auto INTEGER DEFAULT 0, is_read INTEGER DEFAULT 0, FOREIGN KEY(trip_id) REFERENCES trips(id))''')
         
-        # Migration checks
         for tbl, col, df_val in [('all_users', 'promptpay', 'TEXT'), ('all_users', 'bank_name', 'TEXT'), ('all_users', 'bank_account', 'TEXT'), ('trips', 'trip_date', 'TEXT'), ('notifications', 'is_auto', 'INTEGER DEFAULT 0'), ('notifications', 'is_read', 'INTEGER DEFAULT 0'), ('notifications', 'timestamp', 'DATETIME DEFAULT CURRENT_TIMESTAMP')]:
             cursor.execute(f"PRAGMA table_info({tbl})")
             if col not in [r[1] for r in cursor.fetchall()]:
-                cursor.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {df_val}" if 'DEFAULT' in df_val or df_val=='TEXT' else f"ALTER TABLE {tbl} ADD COLUMN {col} {df_val}")
+                cursor.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {df_val}")
         conn.commit()
 
 def compress_image(uploaded_file):
@@ -301,6 +300,7 @@ if current_trip_date: st.subheader(f"📅 วันที่จัด: {current_
 
 tab1, tab2, tab3 = st.tabs(["📝 สร้างบิลใหม่", "📊 ประวัติบันทึกบิล", "💰 สรุปเคลียร์เงินสมาชิก"])
 
+# --- TAB 1: สร้างบิลใหม่ ---
 with tab1:
     with st.form("add_bill", clear_on_submit=True):
         st.header("➕ เพิ่มบิลค่าใช้จ่าย")
@@ -325,11 +325,92 @@ with tab1:
                 st.success(f"📝 บันทึกรายการบิล '{desc}' สำเร็จ!"); time.sleep(1); st.rerun()
             else: st.error("⚠️ กรุณากรอกข้อมูลให้ครบถ้วน")
 
+# --- TAB 2: ประวัติบันทึกบิล ---
 with tab2:
     with get_db_connection() as conn:
         expenses = conn.execute("SELECT * FROM expenses WHERE trip_id = ?", (trip_id,)).fetchall()
-    if not expenses: st.info("ยังไม่มีข้อมูลค่าใช้จ่ายในกลุ่มนี้")
+    if not expenses: st.info("ยังไม่มีข้อมูลค่าใช้จ่ายในกลุ่มนี้ รายการจะอัปเดตเมื่อมีการลงข้อมูล")
     else:
         for row in expenses:
             with st.expander(f"📌 {row['description']} | {row['amount']:,.2f} บาท (โดย {row['payer_name']})"):
-                pass # พื้นที่แสดงข้อมูลเพิ่มเติมของแต่ละบิล
+                st.write(f"👥 **คนร่วมหาร:** {row['split_members']}")
+                if row['image_blob']:
+                    st.image(io.BytesIO(row['image_blob']), caption="สลิปแนบประกอบบิล", width=300)
+                if st.button("🗑️ ลบบิลรายการนี้", key=f"del_exp_{row['id']}", type="secondary"):
+                    with get_db_connection() as conn:
+                        conn.execute("DELETE FROM expenses WHERE id = ?", (row['id'],))
+                        conn.commit()
+                    st.toast("ลบรายการบิลเรียบร้อยแล้ว!"); time.sleep(1); st.rerun()
+
+# --- TAB 3: สรุปเคลียร์เงินสมาชิก ---
+with tab3:
+    st.header("📊 สรุปยอดหักลบกลบหนี้สุทธิภายในกลุ่ม")
+    
+    with get_db_connection() as conn:
+        all_expenses = conn.execute("SELECT * FROM expenses WHERE trip_id = ?", (trip_id,)).fetchall()
+        user_profiles = {r['name']: r for r in conn.execute("SELECT * FROM all_users").fetchall()}
+    
+    # คำนวณหักลบยอดคงเหลือรายบุคคล (Net Balance)
+    balances = {m: 0.0 for m in existing_members}
+    for exp in all_expenses:
+        payer = exp['payer_name']
+        amt = exp['amount']
+        split_m = exp['split_members'].split(",") if exp['split_members'] else []
+        if not split_m: continue
+        
+        share = amt / len(split_m)
+        if payer in balances: balances[payer] += amt
+        for m in split_m:
+            if m in balances: balances[m] -= share
+            
+    # แสดงสถานะยอดเงินรายบุคคล
+    c_pos, c_neg = st.columns(2)
+    with c_pos:
+        st.subheader("🟢 สมาชิกที่ได้รับเงินคืน (จ่ายเกิน)")
+        for m, b in balances.items():
+            if b > 0.01: st.success(f"**{m}**: ได้รับคืน {b:,.2f} บาท")
+    with c_neg:
+        st.subheader("🔴 สมาชิกที่ต้องจ่ายเงินเพิ่ม (จ่ายขาด)")
+        for m, b in balances.items():
+            if b < -0.01: st.error(f"**{m}**: ต้องจ่ายเพิ่ม {abs(b):,.2f} บาท")
+            
+    st.markdown("---")
+    st.subheader("🤝 แนะนำรายการโอนเงินเคลียร์หนี้ที่สั้นที่สุด")
+    
+    # อัลกอริทึมเคลียร์หนี้อย่างง่าย (Greedy Settlement Algorithm)
+    debtors = sorted([[m, b] for m, b in balances.items() if b < -0.01], key=lambda x: x[1])
+    creditors = sorted([[m, b] for m, b in balances.items() if b > 0.01], key=lambda x: x[1], reverse=True)
+    
+    settlement_list = []
+    while debtors and creditors:
+        debtor_name, debtor_bal = debtors[0]
+        creditor_name, creditor_bal = creditors[0]
+        
+        transfer_amt = min(abs(debtor_bal), creditor_bal)
+        settlement_list.append((debtor_name, creditor_name, transfer_amt))
+        
+        debtors[0][1] += transfer_amt
+        creditors[0][1] -= transfer_amt
+        
+        if abs(debtors[0][1]) < 0.01: debtors.pop(0)
+        if creditors[0][1] < 0.01: creditors.pop(0)
+        
+    if not settlement_list: st.info("🎉 ทุกคนยอดเคลียร์ลงตัวเท่ากันหมดแล้ว ไม่มีหนี้ค้างส่งต่อ!")
+    else:
+        for idx, (debtor, creditor, amount) in enumerate(settlement_list):
+            with st.container():
+                st.markdown(f"👉 **{debtor}** ต้องโอนเงินให้ **{creditor}** เป็นจำนวนยอด **{amount:,.2f}** บาท")
+                
+                # แสดงกล่องรายละเอียดธนาคาร / QR Code พร้อมเพย์
+                prof = user_profiles.get(creditor)
+                if prof and (prof['promptpay'] or prof['bank_account']):
+                    with st.expander(f"💳 ดูช่องทางชำระเงินของ {creditor}"):
+                        if prof['promptpay']:
+                            st.info(f"📱 **พร้อมเพย์ (PromptPay):** {prof['promptpay']}")
+                            # ระบบจำลองการเจน QR Code จ่ายเงินด่วนผ่าน API ลิงก์กลาง
+                            pp_url = f"https://promptpay.io/{prof['promptpay']}/{amount:.2f}.png"
+                            st.image(pp_url, caption=f"สแกนเพื่อจ่ายให้ {creditor} ยอด {amount:,.2f} บาท", width=220)
+                        if prof['bank_name'] and prof['bank_account']:
+                            st.code(f"ธนาคาร: {prof['bank_name']}\nเลขบัญชี: {prof['bank_account']}\nชื่อบัญชี: {creditor}", language="text")
+                else:
+                    st.caption(f"ℹ️ {creditor} ยังไม่ได้กรอกข้อมูลช่องทางรับเงินในเมนูโปรไฟล์ส่วนตัวแถบซ้ายมือ")

@@ -353,7 +353,7 @@ if existing_members:
             st.rerun()
     conn_member_notif.close()
 
-selected_u = st.selectbox("ชวนเพื่อนออนไลน์เข้าร่วมบิล:", ["-- เลือกเพื่อน --"] + available_users)
+selected_u = st.sidebar.selectbox("ชวนเพื่อนออนไลน์เข้าร่วมบิล:", ["-- เลือกเพื่อน --"] + available_users)
 if st.sidebar.button("ดึงเข้ากลุ่ม"):
     if selected_u != "-- เลือกเพื่อน --":
         conn.execute("INSERT INTO members (trip_id, name) VALUES (?, ?)", (trip_id, selected_u))
@@ -365,7 +365,7 @@ conn.close()
 
 
 # 🔔 =================================================================
-# ระบบ "แยกแชทรายบุคคล + พิมพ์ตอบกลับในกล่อง (ล้างข้อความเมื่อส่งสำเร็จด้วย Form)" 💬
+# ระบบ "แยกแชทรายบุคคล + ดึงข้อความโต้ตอบสองฝั่ง (ทั้งเพื่อนและเรา) เรียงตามเวลา" 💬
 # =================================================================
 st.sidebar.markdown("---")
 
@@ -388,25 +388,35 @@ if st.session_state["current_online_user"]:
     my_name = st.session_state["current_online_user"]
     
     conn_notif = get_db_connection()
-    my_notifs = conn_notif.execute(
-        "SELECT * FROM notifications WHERE trip_id = ? AND to_user = ? ORDER BY id DESC", 
-        (trip_id, my_name)
+    # 🔄 อัปเดต SQL: ดึงข้อความ "ที่เขาส่งหาเรา" หรือ "ที่เราส่งหาเขา" ใน Event นี้ทั้งหมด
+    all_chat_rows = conn_notif.execute(
+        "SELECT * FROM notifications WHERE trip_id = ? AND (to_user = ? OR from_user = ?) ORDER BY timestamp DESC, id DESC", 
+        (trip_id, my_name, my_name)
     ).fetchall()
     conn_notif.close()
     
     chat_groups = {}
     unread_status = {}
     
-    for n in my_notifs:
-        sender = n['from_user']
-        if sender not in chat_groups:
-            chat_groups[sender] = []
-            unread_status[sender] = 0
-        chat_groups[sender].append(n)
-        if n['is_read'] == 0:
-            unread_status[sender] += 1
+    # แยกกลุ่มแชทตามชื่อ "คู่สนทนา"
+    for n in all_chat_rows:
+        # หาว่าใครคือคู่สนทนาในแท็บนี้ (คนที่ไม่ใช่เรา หรือถ้าระบบส่งหาก็จัดเข้ากลุ่มระบบ)
+        if n['from_user'] == "ระบบสรุปยอด" or n['to_user'] == "ระบบสรุปยอด":
+            partner = "ระบบสรุปยอด"
+        else:
+            partner = n['from_user'] if n['from_user'] != my_name else n['to_user']
+            
+        if partner not in chat_groups:
+            chat_groups[partner] = []
+            unread_status[partner] = 0
+            
+        chat_groups[partner].append(n)
+        
+        # นับจำนวน unread เฉพาะข้อความที่ส่งมาหาเราและยังไม่ได้อ่าน
+        if n['to_user'] == my_name and n['is_read'] == 0:
+            unread_status[partner] += 1
 
-    with st.sidebar.expander(f"📥 แชทแยกรายบุคคล ({len(my_notifs)})", expanded=True):
+    with st.sidebar.expander(f"📥 แชทแยกรายบุคคล ({len(chat_groups)})", expanded=True):
         if not chat_groups:
             st.caption("ไม่มีประวัติข้อความแชท")
         else:
@@ -424,6 +434,7 @@ if st.session_state["current_online_user"]:
             
             for idx, sender in enumerate(sender_keys):
                 with chat_tabs[idx]:
+                    # อัปเดตสถานะเป็นอ่านแล้วเมื่อเปิดดูแท็บแชทนั้นๆ
                     if unread_status[sender] > 0:
                         conn_reset_person = get_db_connection()
                         conn_reset_person.execute(
@@ -434,7 +445,7 @@ if st.session_state["current_online_user"]:
                         conn_reset_person.close()
                         st.rerun()
                     
-                    # 🟢 ส่วนการพิมพ์ตอบกลับในกล่องแชท (แก้ไข: ปล่อยให้ clear_on_submit ล้างกล่องเอง)
+                    # ส่วนการพิมพ์ตอบกลับเพื่อน
                     if sender != "ระบบสรุปยอด":
                         with st.form(key=f"reply_form_{sender}", clear_on_submit=True):
                             reply_key = f"reply_in_{sender}"
@@ -450,7 +461,6 @@ if st.session_state["current_online_user"]:
                                     conn_reply.commit()
                                     conn_reply.close()
                                     
-                                    # ✅ ลบการฝืนสั่งล้าง state ด้วยมืออก ป้องกันอาการกดปุ่มแล้วไม่ทำงาน
                                     st.toast(f"🚀 ส่งคำตอบกลับหา {sender} แล้ว!")
                                     time.sleep(0.3)
                                     st.rerun()
@@ -458,20 +468,21 @@ if st.session_state["current_online_user"]:
                                     st.error("⚠️ กรุณากรอกข้อความ")
                         st.markdown("<div style='margin-bottom: 15px; border-bottom: 2px solid #EEE;'></div>", unsafe_allow_html=True)
 
-                    # วนลูปแสดงข้อความแชทที่ผ่านมา
+                    # วนลูปแสดงข้อความโต้ตอบ (เรียงย้อนหลังล่าสุดอยู่บน หรือเรียงสลับตามที่คุณบันทึก)
                     for notif in chat_groups[sender]:
-                        is_system_or_me = notif['from_user'] in ["ระบบสรุปยอด", my_name] or notif['is_auto'] == 1
+                        # 🔄 เช็ค: ถ้าคนส่งคือตัวเราเอง หรือมาจากระบบ ให้ชิดขวาเป็นสีเขียว
+                        is_me = (notif['from_user'] == my_name) or (notif['from_user'] == "ระบบสรุปยอด")
                         
-                        if is_system_or_me:
+                        if is_me:
                             chat_html = f'''
                             <div style="display: flex; flex-direction: column; align-items: flex-end; margin-bottom: 10px; width: 100%;">
-                                <span style="font-size: 11px; color: #888; margin-right: 5px;">{notif['from_user']}</span>
+                                <span style="font-size: 11px; color: #888; margin-right: 5px;">{notif['from_user']} (คุณ)</span>
                                 <div style="background-color: #85E374; color: #000; padding: 8px 12px; border-radius: 15px 15px 2px 15px; max-width: 85%; word-wrap: break-word; font-size: 13px; box-shadow: 1px 1px 2px rgba(0,0,0,0.1);">
                                     {notif['message']}
                                 </div>
                             </div>
                             '''
-                        else:
+                        else: # ข้อความของเพื่อนคู่สนทนา ให้ชิดซ้ายสีเทา
                             chat_html = f'''
                             <div style="display: flex; flex-direction: column; align-items: flex-start; margin-bottom: 10px; width: 100%;">
                                 <span style="font-size: 11px; color: #888; margin-left: 5px;">{notif['from_user']}</span>
@@ -492,7 +503,7 @@ if st.session_state["current_online_user"]:
                             st.rerun()
                         st.markdown("<div style='margin-bottom: 10px; border-bottom: 1px dashed #DDD;'></div>", unsafe_allow_html=True)
 
-    # ส่วนสร้างกล่องแชทแบบดั้งเดิม (แก้ไข: ปล่อยให้ clear_on_submit ล้างกล่องเองเช่นกัน)
+    # ส่วนสร้างกล่องแชททักทายเพื่อนใหม่
     with st.sidebar.expander("📝 เปิดกล่องคุยกับเพื่อนใหม่"):
         other_members = [m for m in existing_members if m != my_name]
         if not other_members:
@@ -514,7 +525,6 @@ if st.session_state["current_online_user"]:
                         conn_send_notif.commit()
                         conn_send_notif.close()
                         
-                        # ✅ ลบการฝืนล้างค่าออก เพื่อให้ฟอร์มทำงานส่งได้ปกติ
                         st.toast(f"🚀 ส่งข้อความถึง {send_to} แล้ว!")
                         time.sleep(0.5)
                         st.rerun()
@@ -710,3 +720,4 @@ with tab3:
         line_url = f"https://line.me/R/msg/text/?{encoded_msg}"
         
         st.link_button("🟢 แชร์สรุปยอดเข้าแอป LINE", line_url, type="primary", use_container_width=True)
+        

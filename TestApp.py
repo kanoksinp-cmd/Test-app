@@ -371,7 +371,6 @@ if st.session_state["current_online_user"]:
     conn_count.close()
 
 if notif_count > 0:
-    # 🛠️ เปลี่ยนมาใช้ st.sidebar.markdown เพื่อแก้ไขปัญหา TypeError จาก unsafe_allow_html
     st.sidebar.markdown(f"<h3>🔔 ข้อความแจ้งเตือน <span style='color:#FF4B4B; font-size:18px;'>🔴 ({notif_count})</span></h3>", unsafe_allow_html=True)
 else:
     st.sidebar.header("🔔 ข้อความแจ้งเตือน")
@@ -387,21 +386,49 @@ if st.session_state["current_online_user"]:
     ).fetchall()
     conn_notif.close()
     
-    # กล่องรับข้อความแจ้งเตือนที่ส่งถึงเรา
+    # กล่องรับข้อความแจ้งเตือนที่ส่งถึงเรา (ตกแต่งแบบแชท LINE ซ้าย-ขวา)
     with st.sidebar.expander(f"📥 กล่องข้อความของคุณ ({len(my_notifs)})", expanded=True):
         if not my_notifs:
             st.caption("ไม่มีข้อความเรียกเก็บเงินใหม่")
         else:
             for notif in my_notifs:
-                st.info(f"✍️ **จาก:** {notif['from_user']}\n\n{notif['message']}")
-                if st.button("🗑️ ลบ", key=f"del_notif_{notif['id']}", type="secondary", use_container_width=True):
+                # 💬 เช็คประเภทข้อความ: ถ้ามาจากบิลอัตโนมัติ/หรือตัวเราส่งหาตัวเอง ให้ชิดขวา (สไตล์เราส่ง) นอกนั้นชิดซ้าย (สไตล์คนอื่นส่งมา)
+                is_system_or_me = notif['from_user'] in ["ระบบสรุปยอด", my_name]
+                
+                if is_system_or_me:
+                    # 🟢 แชทฝั่งขวา (สีเขียวสไตล์ LINE)
+                    chat_html = f'''
+                    <div style="display: flex; flex-direction: column; align-items: flex-end; margin-bottom: 10px; width: 100%;">
+                        <span style="font-size: 11px; color: #888; margin-right: 5px;">{notif['from_user']}</span>
+                        <div style="background-color: #85E374; color: #000; padding: 8px 12px; border-radius: 15px 15px 2px 15px; max-width: 85%; word-wrap: break-word; font-size: 13px; box-shadow: 1px 1px 2px rgba(0,0,0,0.1);">
+                            {notif['message']}
+                        </div>
+                    </div>
+                    '''
+                else:
+                    # ⚪ แชทฝั่งซ้าย (สีเทา/ขาว สไตล์เพื่อนส่งมา)
+                    chat_html = f'''
+                    <div style="display: flex; flex-direction: column; align-items: flex-start; margin-bottom: 10px; width: 100%;">
+                        <span style="font-size: 11px; color: #888; margin-left: 5px;">{notif['from_user']}</span>
+                        <div style="background-color: #EAEAEA; color: #000; padding: 8px 12px; border-radius: 15px 15px 15px 2px; max-width: 85%; word-wrap: break-word; font-size: 13px; box-shadow: 1px 1px 2px rgba(0,0,0,0.1);">
+                            {notif['message']}
+                        </div>
+                    </div>
+                    '''
+                
+                # แสดงผลกล่องข้อความแชท
+                st.markdown(chat_html, unsafe_allow_html=True)
+                
+                # ปุ่มกดลบซ่อนอยู่ใต้ข้อความแชทนั้นๆ
+                if st.button("🗑️ อ่านแล้วลบ", key=f"del_notif_{notif['id']}", type="secondary", use_container_width=True):
                     conn_del_notif = get_db_connection()
                     conn_del_notif.execute("DELETE FROM notifications WHERE id = ?", (notif['id'],))
                     conn_del_notif.commit()
                     conn_del_notif.close()
                     st.toast("ลบข้อความแจ้งเตือนเรียบร้อย")
-                    time.sleep(0.5)
+                    time.sleep(0.3)
                     st.rerun()
+                st.markdown("<div style='margin-bottom: 15px; border-bottom: 1px dashed #DDD;'></div>", unsafe_allow_html=True)
 
     # ฟอร์มเขียนข้อความเพื่อส่งหาเพื่อนในกลุ่ม
     with st.sidebar.expander("📝 ส่งข้อความเรียกเก็บเงิน"):

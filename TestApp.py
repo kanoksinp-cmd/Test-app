@@ -560,3 +560,6 @@ with tab3:
         saved = pd.read_sql_query(f"SELECT debtor as 'จาก', creditor as 'ถึง', amount as 'จำนวน' FROM settlements WHERE trip_id = {trip_id}", conn)
         conn.close()
         if not saved.empty: st.table(saved)
+
+เพิ่ม subheader กล่องข้อความ  
+ไว้แจ้งเตือน สมาชิกคนไหน ต้องจ่ายเงิน

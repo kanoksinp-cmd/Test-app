@@ -760,16 +760,42 @@ with tab3:
         line_msg = f"📊 สรุปยอดค่าใช้จ่ายทริป: {current_trip}\n"
         if has_valid_date:
             line_msg += f"📅 วันที่: {current_trip_date}\n"
+        line_msg += "===============================\n"
+
+        # 🆕 รายละเอียดบิลทุกรายการ
+        line_msg += "📋 รายละเอียดค่าใช้จ่ายทั้งหมด\n"
+        line_msg += "-------------------------------\n"
+        total_all = 0.0
+        for i, r in enumerate(expenses_rows, 1):
+            s_list = r['split_members'].split(",")
+            share = r['amount'] / len(s_list)
+            members_str = ", ".join(s_list)
+            line_msg += f"{i}. {r['description']}\n"
+            line_msg += f"   💰 {r['amount']:,.2f} บาท | จ่ายโดย: {r['payer_name']}\n"
+            line_msg += f"   👥 หารกัน {len(s_list)} คน ({members_str})\n"
+            line_msg += f"   ➗ คนละ {share:,.2f} บาท\n"
+            total_all += r['amount']
+        line_msg += "-------------------------------\n"
+        line_msg += f"💵 รวมค่าใช้จ่ายทั้งหมด: {total_all:,.2f} บาท\n"
+        line_msg += "===============================\n"
+
+        # สรุปแผนการโอนเงิน
+        line_msg += "🚀 แผนการโอนเงินคืน\n"
         line_msg += "-------------------------------\n"
         for d_n, c_n, a_m in final_tx:
             line_msg += f"💳 {d_n} โอนให้ 👉 {c_n} = {a_m:,.2f} บาท\n"
             prof = user_profiles.get(c_n, {})
             pp = (prof.get("promptpay") or "").strip()
+            b_name = (prof.get("bank_name") or "").strip()
+            b_acc = (prof.get("bank_acc") or "").strip()
             if pp:
-                line_msg += f"   (📱 พร้อมเพย์: {pp})\n"
-        line_msg += "-------------------------------"
+                line_msg += f"   📱 พร้อมเพย์: {pp}\n"
+            if b_acc:
+                bank_label = b_name if b_name else "บัญชีธนาคาร"
+                line_msg += f"   🏦 {bank_label}: {b_acc}\n"
+        line_msg += "==============================="
         
-        st.text_area("📋 ข้อความที่จะส่งเข้า LINE:", value=line_msg, height=150, disabled=True)
+        st.text_area("📋 ข้อความที่จะส่งเข้า LINE:", value=line_msg, height=250, disabled=True)
         
         encoded_msg = urllib.parse.quote(line_msg)
         line_url = f"https://line.me/R/msg/text/?{encoded_msg}"
